@@ -1,0 +1,9 @@
+Photosynthesis: How Plants Make Food
+
+Photosynthesis is the process by which green plants, algae, and some bacteria convert light energy into chemical energy stored in glucose. It is arguably the most important chemical process on Earth, since nearly all life depends on it directly or indirectly.
+
+The overall equation for photosynthesis is:
+6 CO2 + 6 H2O + light energy -> C6H12O6 + 6 O2
+
+Chloroplasts and Chlorophyll
+Photosynthesis takes place inside organelles called chloroplasts, which are found m
