@@ -131,6 +131,44 @@ export default function StudentDetailModal({
                 )}
               </div>
 
+              {/* Saved progress per lesson (what the student sees on their side) */}
+              {data.progress.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-600">Progress by lesson</h3>
+                  <div className="mt-2 space-y-1.5">
+                    {data.progress.map((p) => (
+                      <div key={p.lesson_id} className="rounded-xl bg-slate-50 px-3 py-2 text-sm" data-testid="lesson-progress">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate">{p.title}</span>
+                          <span className="shrink-0 text-xs text-slate-400">
+                            {p.completed.length} / {Object.keys(MODALITY_ICON).length} formats done
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {Object.entries(MODALITY_ICON).map(([m, icon]) => {
+                            const done = p.completed.includes(m as (typeof p.completed)[number]);
+                            return (
+                              <span key={m} title={`${m.replace("_", " ")}${done ? " — done" : ""}`}
+                                className={`rounded-md px-1.5 py-0.5 text-xs ${done ? "bg-emerald-100 text-emerald-700" : "bg-white text-slate-300 grayscale"}`}>
+                                {icon}{done ? " ✓" : ""}
+                              </span>
+                            );
+                          })}
+                          {p.flashcards && (
+                            <span className="ml-auto text-xs text-slate-500">
+                              🃏 {p.flashcards.known}/{p.flashcards.total} known · {p.flashcards.review} to review
+                            </span>
+                          )}
+                          {!p.flashcards && p.completed.length === 0 && (
+                            <span className="ml-auto text-xs text-slate-400">Not started</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Per-lesson */}
               {data.lessons.length > 0 && (
                 <div>

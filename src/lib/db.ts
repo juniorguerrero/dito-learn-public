@@ -2,33 +2,42 @@ import fs from "fs";
 import path from "path";
 import { randomUUID, randomInt } from "crypto";
 import { Classroom, Student, LearningEvent, DirectMessage } from "./types";
+import { dataRoot, writeJsonAtomic } from "./dataDir";
 
 // Filesystem store for the platform entities. Same spirit as store.ts —
 // swap for Supabase later without changing callers.
 
-const ROOT = path.join(process.cwd(), "data");
-const CLASSROOMS = path.join(ROOT, "classrooms");
-const STUDENTS = path.join(ROOT, "students");
-const EVENTS_FILE = path.join(ROOT, "events.jsonl");
-const MESSAGES_FILE = path.join(ROOT, "messages.jsonl");
+const classroomsDir = () => path.join(dataRoot(), "classrooms");
+const studentsDir = () => path.join(dataRoot(), "students");
+const eventsFile = () => path.join(dataRoot(), "events.jsonl");
+const messagesFile = () => path.join(dataRoot(), "messages.jsonl");
 
 function ensure() {
-  fs.mkdirSync(CLASSROOMS, { recursive: true });
-  fs.mkdirSync(STUDENTS, { recursive: true });
+  fs.mkdirSync(classroomsDir(), { recursive: true });
+  fs.mkdirSync(studentsDir(), { recursive: true });
 }
 
-const safeId = (id: string) => /^[a-zA-Z0-9-]+$/.test(id);
+export const safeId = (id: string) => /^[a-zA-Z0-9-]+$/.test(id);
 
 // ---------- Classrooms ----------
 
 export function saveClassroom(c: Classroom): void {
   ensure();
-  fs.writeFileSync(path.join(CLASSROOMS, `${c.id}.json`), JSON.stringify(c, null, 2));
+  writeJsonAtomic(path.join(classroomsDir(), `${c.id}.json`), c);
+}
+
+/** Read-modify-write on the current classroom file, with no await in between (see updateProject). */
+export function updateClassroom(id: string, mutate: (current: Classroom) => void): Classroom | null {
+  const current = getClassroom(id);
+  if (!current) return null;
+  mutate(current);
+  saveClassroom(current);
+  return current;
 }
 
 export function getClassroom(id: string): Classroom | null {
   if (!safeId(id)) return null;
-  const f = path.join(CLASSROOMS, `${id}.json`);
+  const f = path.join(classroomsDir(), `${id}.json`);
   if (!fs.existsSync(f)) return null;
   return JSON.parse(fs.readFileSync(f, "utf-8")) as Classroom;
 }
@@ -36,15 +45,21 @@ export function getClassroom(id: string): Classroom | null {
 export function listClassrooms(): Classroom[] {
   ensure();
   return fs
-    .readdirSync(CLASSROOMS)
+    .readdirSync(classroomsDir())
     .filter((f) => f.endsWith(".json"))
-    .map((f) => JSON.parse(fs.readFileSync(path.join(CLASSROOMS, f), "utf-8")) as Classroom)
+    .map((f) => JSON.parse(fs.readFileSync(path.join(classroomsDir(), f), "utf-8")) as Classroom)
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
 
+// Students type codes by hand: accept "abc 123", "ABC-123", " abc123 " etc.
+export function normalizeJoinCode(code: unknown): string {
+  return typeof code === "string" ? code.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+}
+
 export function getClassroomByCode(code: string): Classroom | null {
-  const norm = code.trim().toUpperCase();
-  return listClassrooms().find((c) => c.join_code === norm) || null;
+  const norm = normalizeJoinCode(code);
+  if (!norm) return null;
+  return listClassrooms().find((c) => normalizeJoinCode(c.join_code) === norm) || null;
 }
 
 export function makeJoinCode(): string {
@@ -61,12 +76,12 @@ export function makeJoinCode(): string {
 
 export function saveStudent(s: Student): void {
   ensure();
-  fs.writeFileSync(path.join(STUDENTS, `${s.id}.json`), JSON.stringify(s, null, 2));
+  writeJsonAtomic(path.join(studentsDir(), `${s.id}.json`), s);
 }
 
 export function getStudent(id: string): Student | null {
   if (!safeId(id)) return null;
-  const f = path.join(STUDENTS, `${id}.json`);
+  const f = path.join(studentsDir(), `${id}.json`);
   if (!fs.existsSync(f)) return null;
   return JSON.parse(fs.readFileSync(f, "utf-8")) as Student;
 }
@@ -74,9 +89,9 @@ export function getStudent(id: string): Student | null {
 export function listStudents(): Student[] {
   ensure();
   return fs
-    .readdirSync(STUDENTS)
+    .readdirSync(studentsDir())
     .filter((f) => f.endsWith(".json"))
-    .map((f) => JSON.parse(fs.readFileSync(path.join(STUDENTS, f), "utf-8")) as Student);
+    .map((f) => JSON.parse(fs.readFileSync(path.join(studentsDir(), f), "utf-8")) as Student);
 }
 
 export function listStudentsInClassroom(classroomId: string): Student[] {
@@ -88,14 +103,14 @@ export function listStudentsInClassroom(classroomId: string): Student[] {
 export function logEvent(e: Omit<LearningEvent, "id" | "created_at">): LearningEvent {
   ensure();
   const full: LearningEvent = { ...e, id: randomUUID(), created_at: new Date().toISOString() };
-  fs.appendFileSync(EVENTS_FILE, JSON.stringify(full) + "\n");
+  fs.appendFileSync(eventsFile(), JSON.stringify(full) + "\n");
   return full;
 }
 
 export function getEvents(classroomId?: string): LearningEvent[] {
-  if (!fs.existsSync(EVENTS_FILE)) return [];
+  if (!fs.existsSync(eventsFile())) return [];
   const events = fs
-    .readFileSync(EVENTS_FILE, "utf-8")
+    .readFileSync(eventsFile(), "utf-8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l) as LearningEvent);
@@ -107,14 +122,14 @@ export function getEvents(classroomId?: string): LearningEvent[] {
 export function saveDirectMessage(m: Omit<DirectMessage, "id" | "created_at">): DirectMessage {
   ensure();
   const full: DirectMessage = { ...m, id: randomUUID(), created_at: new Date().toISOString() };
-  fs.appendFileSync(MESSAGES_FILE, JSON.stringify(full) + "\n");
+  fs.appendFileSync(messagesFile(), JSON.stringify(full) + "\n");
   return full;
 }
 
 export function getDirectMessages(classroomId: string, studentId?: string): DirectMessage[] {
-  if (!fs.existsSync(MESSAGES_FILE)) return [];
+  if (!fs.existsSync(messagesFile())) return [];
   return fs
-    .readFileSync(MESSAGES_FILE, "utf-8")
+    .readFileSync(messagesFile(), "utf-8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l) as DirectMessage)

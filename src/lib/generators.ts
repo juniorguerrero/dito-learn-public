@@ -13,13 +13,22 @@ import {
 } from "./types";
 import * as mocks from "./mocks";
 
+// Mock mode answers instantly, which hides timing problems that only show up
+// when generation takes seconds (as it does with Claude). For realistic testing
+// and demos, MOCK_GENERATION_DELAY_MS adds that latency. Default 0: no change.
+async function mockResult<T>(value: T): Promise<T> {
+  const ms = Number(process.env.MOCK_GENERATION_DELAY_MS) || 0;
+  if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+  return value;
+}
+
 const BLUEPRINT_SYSTEM = `You are Antclass, an expert learning designer. You turn raw study documents into a structured "Learning Blueprint" that powers mind maps, flashcards, stories, podcasts, games, videos and songs. You always respond with valid JSON only — no prose, no markdown.`;
 
 export async function createLearningBlueprint(
   documentText: string,
   profile: StudentProfile
 ): Promise<LearningBlueprint> {
-  if (!hasClaudeKey()) return mocks.mockBlueprint(documentText, profile);
+  if (!hasClaudeKey()) return mockResult(mocks.mockBlueprint(documentText, profile));
 
   const prompt = `Analyze this learning document and produce a Learning Blueprint as JSON.
 
@@ -59,7 +68,7 @@ ${JSON.stringify(bp, null, 2)}`;
 }
 
 export async function generateMindMap(bp: LearningBlueprint): Promise<MindMapData> {
-  if (!hasClaudeKey()) return mocks.mockMindMap(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockMindMap(bp));
   const prompt = `${blueprintContext(bp)}
 
 Create a mind map as JSON:
@@ -72,7 +81,7 @@ Rules: exactly one root node (the title). Chapters connect to root. Concepts con
 }
 
 export async function generateFlashcards(bp: LearningBlueprint): Promise<FlashcardsData> {
-  if (!hasClaudeKey()) return mocks.mockFlashcards(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockFlashcards(bp));
   const prompt = `${blueprintContext(bp)}
 
 Create 10-14 flashcards as JSON:
@@ -82,7 +91,7 @@ Cover every key concept at least once. Include cards that target the common misc
 }
 
 export async function generateStorySlides(bp: LearningBlueprint): Promise<StorySlidesData> {
-  if (!hasClaudeKey()) return mocks.mockStorySlides(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockStorySlides(bp));
   const prompt = `${blueprintContext(bp)}
 
 Write a short educational story that teaches the key concepts through narrative, as 6-8 slides:
@@ -95,7 +104,7 @@ The story needs a protagonist, a journey, and each slide should weave in one key
 }
 
 export async function generatePodcastScript(bp: LearningBlueprint): Promise<PodcastData> {
-  if (!hasClaudeKey()) return mocks.mockPodcast(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockPodcast(bp));
   const prompt = `${blueprintContext(bp)}
 
 Write a two-person educational podcast script as JSON:
@@ -108,7 +117,7 @@ Write a two-person educational podcast script as JSON:
 }
 
 export async function generateStoryAudioScript(bp: LearningBlueprint): Promise<StoryAudioData> {
-  if (!hasClaudeKey()) return mocks.mockStoryAudio(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockStoryAudio(bp));
   const prompt = `${blueprintContext(bp)}
 
 Write a narrated audio-story script with sound design cues as JSON:
@@ -122,7 +131,7 @@ Write a narrated audio-story script with sound design cues as JSON:
 }
 
 export async function generateGameSpec(bp: LearningBlueprint): Promise<GameSpecData> {
-  if (!hasClaudeKey()) return mocks.mockGameSpec(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockGameSpec(bp));
   const prompt = `${blueprintContext(bp)}
 
 Design "Concept Quest", an educational game, as JSON:
@@ -144,7 +153,7 @@ Difficulty: ${bp.quiz_difficulty}. Wrong-answer options must be plausible (use t
 }
 
 export async function generateVideoStoryboard(bp: LearningBlueprint): Promise<VideoStoryboardData> {
-  if (!hasClaudeKey()) return mocks.mockVideoStoryboard(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockVideoStoryboard(bp));
   const prompt = `${blueprintContext(bp)}
 
 Create a 60-90 second educational video storyboard as JSON:
@@ -164,7 +173,7 @@ Scene 1 hooks, middle scenes teach one concept each, last scene recaps.`;
 }
 
 export async function generateSongSpec(bp: LearningBlueprint): Promise<SongSpecData> {
-  if (!hasClaudeKey()) return mocks.mockSongSpec(bp);
+  if (!hasClaudeKey()) return mockResult(mocks.mockSongSpec(bp));
   const prompt = `${blueprintContext(bp)}
 
 Write a study song as JSON:

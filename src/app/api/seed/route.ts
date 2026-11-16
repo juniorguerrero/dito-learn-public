@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { randomUUID, randomInt } from "crypto";
 import { saveProject } from "@/lib/store";
-import { saveClassroom, saveStudent, makeJoinCode, logEvent } from "@/lib/db";
+import { completionKey } from "@/lib/progressShared";
+import { saveClassroom, saveStudent, makeJoinCode, logEvent, listClassrooms } from "@/lib/db";
 import {
   generateMindMap,
   generateFlashcards,
@@ -20,11 +19,6 @@ import { SEED_LESSONS, SEED_STUDENTS, MODALITY_WEIGHTS, SEED_QUESTIONS } from "@
 import { Project, Classroom, Student, OutputType, StudentProfile } from "@/lib/types";
 
 export const maxDuration = 120;
-
-function wipeData() {
-  const dir = path.join(process.cwd(), "data");
-  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-}
 
 // Build all 8 outputs for a lesson from its (rich) blueprint, attaching mock images.
 async function generateAllOutputs(project: Project): Promise<void> {
@@ -62,9 +56,15 @@ function weightedModality(): OutputType {
   return "song";
 }
 
+// Adds the demo classroom next to whatever already exists. It never deletes
+// real classrooms, lessons, students or progress; if the demo was already
+// loaded, that demo is returned as-is.
 export async function POST() {
   try {
-    wipeData();
+    const existing = listClassrooms().find((c) => c.is_demo);
+    if (existing) {
+      return NextResponse.json({ ok: true, existing: true, classroom_id: existing.id, join_code: existing.join_code, lessons: existing.lesson_ids.length });
+    }
 
     // 1. Classroom
     const classroom: Classroom = {
@@ -76,6 +76,7 @@ export async function POST() {
       join_code: makeJoinCode(),
       created_at: pastISO(60 * 24 * 3),
       lesson_ids: [],
+      is_demo: true,
     };
 
     // 2. Lessons (with all outputs generated)
@@ -125,6 +126,8 @@ export async function POST() {
     // 4. Realistic event log powering the observability dashboard
     let eventCount = 0;
     let qIndex = 0;
+    // A format is completed at most once per student + lesson (same rule as live progress).
+    const completedKeys = new Set<string>();
     for (const student of students) {
       const sessions = 3 + randomInt(4); // each student had several sessions
       for (let i = 0; i < sessions; i++) {
@@ -136,7 +139,9 @@ export async function POST() {
           const modality = weightedModality();
           logEvent({ classroom_id: classroom.id, student_id: student.id, student_name: student.name, lesson_id: lessonId, type: "modality_open", modality });
           eventCount++;
-          if (randomInt(3) > 0) {
+          const key = completionKey(student.id, lessonId, modality);
+          if (randomInt(3) > 0 && !completedKeys.has(key)) {
+            completedKeys.add(key);
             logEvent({ classroom_id: classroom.id, student_id: student.id, student_name: student.name, lesson_id: lessonId, type: "modality_complete", modality });
             eventCount++;
           }

@@ -201,6 +201,7 @@ export interface Classroom {
   join_code: string;
   created_at: string;
   lesson_ids: string[]; // Project ids
+  is_demo?: boolean; // created by "Load demo data"
 }
 
 export interface Student {
@@ -253,4 +254,31 @@ export interface DirectMessage {
   sender: "professor" | "student";
   sender_name: string;
   text: string;
+}
+
+// ---------- Per-student lesson progress (persisted per student + lesson) ----------
+
+// Flashcard self-assessment state. Indices refer to cards in the deck whose
+// fingerprint is `deck_key`; if the deck is regenerated the key changes and the
+// saved indices are no longer applied (they would point at different cards).
+export interface FlashcardProgress {
+  deck_key: string;
+  current_index: number;
+  known: number[];
+  review: number[];
+}
+
+export interface LessonProgress {
+  student_id: string;
+  lesson_id: string;
+  classroom_id: string;
+  // modality -> ISO time it was first completed. A key is only ever added once.
+  completed: Partial<Record<OutputType, string>>;
+  flashcards: FlashcardProgress | null;
+  // Revision of the last applied flashcard snapshot. Snapshots carry the
+  // revision assigned when the student acted; older ones are never applied, so
+  // network arrival order can't roll progress back. 0 = nothing saved yet.
+  flashcards_rev: number;
+  created_at: string;
+  updated_at: string;
 }

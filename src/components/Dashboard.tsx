@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Project, OutputType } from "@/lib/types";
+import { Project, OutputType, FlashcardProgress } from "@/lib/types";
+import { browserStorage, loadLocalFlashcards, saveLocalFlashcards } from "@/lib/localProgress";
 import BlueprintPanel from "./BlueprintPanel";
 import MindMapTab from "./tabs/MindMapTab";
 import FlashcardsTab from "./tabs/FlashcardsTab";
@@ -34,6 +35,21 @@ export default function Dashboard({ initialProject }: { initialProject: Project 
   const [genStates, setGenStates] = useState<Partial<Record<OutputType, GenState>>>({});
   const [bulk, setBulk] = useState<{ active: boolean; current: OutputType | null; doneCount: number; total: number }>(
     { active: false, current: null, doneCount: 0, total: 0 }
+  );
+
+  // The professor's own flashcard practice, saved in this browser per lesson.
+  const [practice, setPractice] = useState<{ loaded: boolean; fc: FlashcardProgress | null; saved: boolean }>(
+    { loaded: false, fc: null, saved: true }
+  );
+  useEffect(() => {
+    setPractice({ loaded: true, fc: loadLocalFlashcards(browserStorage(), project.id), saved: true });
+  }, [project.id]);
+  const savePractice = useCallback(
+    (fc: FlashcardProgress) => {
+      const saved = saveLocalFlashcards(browserStorage(), project.id, fc);
+      setPractice({ loaded: true, fc, saved });
+    },
+    [project.id]
   );
 
   const generate = useCallback(
@@ -187,8 +203,23 @@ export default function Dashboard({ initialProject }: { initialProject: Project 
         {tab === "mindmap" && (
           <MindMapTab data={project.outputs.mindmap} state={genStates.mindmap} onGenerate={(f) => generate("mindmap", f)} />
         )}
-        {tab === "flashcards" && (
-          <FlashcardsTab data={project.outputs.flashcards} state={genStates.flashcards} onGenerate={(f) => generate("flashcards", f)} />
+        {tab === "flashcards" && practice.loaded && (
+          <div>
+            {project.outputs.flashcards && (
+              <p className={`mb-2 text-xs ${practice.saved ? "text-slate-400" : "text-amber-600"}`} role="status">
+                {practice.saved
+                  ? "✓ Your practice progress is saved in this browser."
+                  : "⚠️ This browser isn't allowing storage, so practice progress won't be kept."}
+              </p>
+            )}
+            <FlashcardsTab
+              data={project.outputs.flashcards}
+              state={genStates.flashcards}
+              onGenerate={(f) => generate("flashcards", f)}
+              savedProgress={practice.fc}
+              onProgressChange={savePractice}
+            />
+          </div>
         )}
         {tab === "story_slides" && (
           <StorySlidesTab data={project.outputs.story_slides} state={genStates.story_slides} onGenerate={(f) => generate("story_slides", f)} />

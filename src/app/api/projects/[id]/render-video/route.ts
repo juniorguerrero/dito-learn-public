@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProject, saveProject } from "@/lib/store";
+import { getProject, updateProject } from "@/lib/store";
 import { generateVideo } from "@/lib/runpod";
 
 export const maxDuration = 800;
@@ -18,6 +18,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const indices: number[] = Array.isArray(body.scenes) && body.scenes.length ? body.scenes : [0];
 
   const rendered: number[] = [];
+  // Attach each clip to the *current* lesson file as soon as it's ready (so other
+  // outputs saved meanwhile are kept), and only if that scene wasn't regenerated.
+  const attach = (i: number, prompt: string, url: string) =>
+    updateProject(params.id, (cur) => {
+      const sc = cur.outputs.video?.scenes[i];
+      if (sc && sc.video_prompt === prompt) sc.video_url = url;
+    });
   try {
     for (const i of indices) {
       const scene = video.scenes[i];
@@ -26,12 +33,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (res.video_url) {
         scene.video_url = res.video_url;
         rendered.push(i);
-        saveProject(project); // save after each clip so progress persists even if a later one fails
+        attach(i, scene.video_prompt, res.video_url);
       }
     }
     return NextResponse.json({ rendered, scenes: video.scenes.map((s) => ({ title: s.title, video_url: s.video_url })) });
   } catch (err) {
-    saveProject(project);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Video render failed", rendered },
       { status: 500 }

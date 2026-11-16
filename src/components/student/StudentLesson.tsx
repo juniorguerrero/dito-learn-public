@@ -14,6 +14,7 @@ import GameTab from "../tabs/GameTab";
 import VideoTab from "../tabs/VideoTab";
 import SongTab from "../tabs/SongTab";
 import LessonChat from "./LessonChat";
+import { useLessonProgress } from "./useLessonProgress";
 
 const MODALITIES: { key: OutputType; label: string; icon: string; blurb: string }[] = [
   { key: "mindmap", label: "Mind Map", icon: "🧠", blurb: "See how it all connects" },
@@ -36,8 +37,11 @@ export default function StudentLesson({
   const [project, setProject] = useState<Project>(initialProject);
   const [active, setActive] = useState<OutputType | null>(null);
   const [genStates, setGenStates] = useState<Partial<Record<OutputType, GenState>>>({});
-  const [completed, setCompleted] = useState<Set<OutputType>>(new Set());
-  const [student, setStudent] = useState<LocalStudent | null>(null);
+  // undefined until the local identity has been read (avoids a flash of "not saved").
+  const [student, setStudent] = useState<LocalStudent | null | undefined>(undefined);
+  // Flashcard choices/position + completed formats, persisted per student + lesson.
+  const progress = useLessonProgress(project.id, student);
+  const completed = progress.completed;
   const openedRef = useRef(false);
 
   useEffect(() => {
@@ -94,12 +98,23 @@ export default function StudentLesson({
     if (!project.outputs[type]) generate(type);
   }
 
+  // Idempotent on the server: a format counts once per student + lesson.
   function markComplete(type: OutputType) {
-    setCompleted((c) => new Set(c).add(type));
-    if (student) track({ classroom_id: classroom.id, student_id: student.id, student_name: student.name, lesson_id: project.id, type: "modality_complete", modality: type });
+    void progress.complete(type);
   }
 
   const bp = project.blueprint;
+  const doneCount = MODALITIES.filter((m) => completed.has(m.key)).length;
+  const allDone = doneCount === MODALITIES.length;
+  // The next format the student hasn't finished, starting after `after` (wraps around).
+  function nextUp(after: OutputType): (typeof MODALITIES)[number] | null {
+    const start = MODALITIES.findIndex((m) => m.key === after);
+    for (let step = 1; step < MODALITIES.length; step++) {
+      const m = MODALITIES[(start + step) % MODALITIES.length];
+      if (!completed.has(m.key)) return m;
+    }
+    return null;
+  }
 
   function renderActive() {
     if (!active) return null;
@@ -107,7 +122,20 @@ export default function StudentLesson({
     const shared = { state, onGenerate: (f?: boolean) => generate(active, f) };
     switch (active) {
       case "mindmap": return <MindMapTab data={project.outputs.mindmap} {...shared} />;
-      case "flashcards": return <FlashcardsTab data={project.outputs.flashcards} {...shared} />;
+      case "flashcards":
+        // Wait for the saved deck position so it isn't overwritten by a fresh one.
+        if (progress.mode === "loading") {
+          return <div className="rounded-2xl border border-slate-200 bg-white p-14 text-center text-sm text-slate-400">Restoring your progress…</div>;
+        }
+        return (
+          <FlashcardsTab
+            data={project.outputs.flashcards}
+            {...shared}
+            savedProgress={progress.flashcards}
+            onProgressChange={progress.saveFlashcards}
+            onDeckComplete={() => progress.complete("flashcards")}
+          />
+        );
       case "story_slides": return <StorySlidesTab data={project.outputs.story_slides} {...shared} />;
       case "podcast": return <PodcastTab data={project.outputs.podcast} {...shared} onSynthesize={() => synthesizeAudio("podcast")} />;
       case "story_audio": return <StoryAudioTab data={project.outputs.story_audio} {...shared} onSynthesize={() => synthesizeAudio("story_audio")} />;
@@ -124,6 +152,7 @@ export default function StudentLesson({
         <div className="mt-2">
           <h1 className="text-2xl font-bold">{bp.title}</h1>
           <p className="mt-0.5 text-slate-500 line-clamp-2">{bp.summary}</p>
+          <ProgressStatus mode={progress.mode} saveStatus={progress.saveStatus} notice={progress.notice} />
         </div>
       </div>
 
@@ -131,24 +160,53 @@ export default function StudentLesson({
         <div className="nice-scroll lg:min-h-0 lg:overflow-y-auto lg:pr-1">
           {!active ? (
             <div>
+              {/* Lesson progress */}
+              {allDone ? (
+                <div className="mb-4 rounded-2xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 p-4" data-testid="lesson-progress">
+                  <p className="text-lg font-bold text-emerald-800">🎉 Lesson complete!</p>
+                  <p className="text-sm text-emerald-700">You finished all {MODALITIES.length} formats. Open any of them again to review.</p>
+                </div>
+              ) : (
+                <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" data-testid="lesson-progress">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-semibold text-slate-700">Your progress</span>
+                    <span className="font-medium text-emerald-700">{doneCount} of {MODALITIES.length} formats done</span>
+                  </div>
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 transition-all"
+                      style={{ width: `${(doneCount / MODALITIES.length) * 100}%` }} />
+                  </div>
+                </div>
+              )}
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">How do you want to learn this?</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-                {MODALITIES.map((m) => (
-                  <button key={m.key} onClick={() => openModality(m.key)}
-                    className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-fuchsia-300 hover:shadow-md">
+                {MODALITIES.map((m) => {
+                  const done = completed.has(m.key);
+                  return (
+                  <button key={m.key} onClick={() => openModality(m.key)} data-done={done ? "true" : "false"}
+                    className={`group relative rounded-2xl border-2 p-5 text-left shadow-sm transition hover:shadow-md ${
+                      done ? "border-emerald-300 bg-emerald-50 hover:border-emerald-400" : "border-slate-200 bg-white hover:border-fuchsia-300"
+                    }`}>
+                    {done && (
+                      <span className="absolute right-3 top-3 rounded-full bg-emerald-500 px-2.5 py-0.5 text-xs font-bold text-white shadow-sm">
+                        ✓ Done
+                      </span>
+                    )}
                     <div className="text-3xl">{m.icon}</div>
-                    <h3 className="mt-2 font-bold">{m.label}</h3>
-                    <p className="text-xs text-slate-400">{m.blurb}</p>
+                    <h3 className={`mt-2 font-bold ${done ? "text-emerald-800" : ""}`}>{m.label}</h3>
+                    <p className={`text-xs ${done ? "text-emerald-600" : "text-slate-400"}`}>{m.blurb}</p>
                     <div className="mt-2 flex items-center gap-1.5">
-                      {project.outputs[m.key] ? (
+                      {done ? (
+                        <span className="text-[10px] font-medium text-emerald-600">Open again to review</span>
+                      ) : project.outputs[m.key] ? (
                         <span className="text-[10px] font-medium text-emerald-500">● ready</span>
                       ) : (
                         <span className="text-[10px] font-medium text-fuchsia-500">✨ generate on open</span>
                       )}
-                      {completed.has(m.key) && <span className="text-[10px] font-medium text-emerald-600">✓ done</span>}
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -160,18 +218,36 @@ export default function StudentLesson({
                 <div className="flex gap-1 overflow-x-auto">
                   {MODALITIES.map((m) => (
                     <button key={m.key} onClick={() => openModality(m.key)}
-                      className={`shrink-0 rounded-lg px-2.5 py-1.5 text-sm transition ${active === m.key ? "bg-fuchsia-600 text-white" : "text-slate-400 hover:bg-slate-100"}`}
-                      title={m.label}>
+                      className={`shrink-0 rounded-lg px-2.5 py-1.5 text-sm transition ${
+                        active === m.key ? "bg-fuchsia-600 text-white" : completed.has(m.key) ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "text-slate-400 hover:bg-slate-100"
+                      }`}
+                      title={completed.has(m.key) ? `${m.label} — done` : m.label}>
                       {m.icon}
                     </button>
                   ))}
                 </div>
                 <button onClick={() => markComplete(active)}
-                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                    completed.has(active) ? "bg-emerald-100 text-emerald-700" : "bg-emerald-500 text-white hover:bg-emerald-600"
+                  disabled={completed.has(active) || progress.pending.has(active) || progress.mode === "loading"}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition disabled:cursor-default ${
+                    completed.has(active) ? "bg-emerald-100 text-emerald-700" : "bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-60"
                   }`}>
-                  {completed.has(active) ? "✓ Completed" : "I got this ✓"}
+                  {completed.has(active) ? "✓ Completed" : progress.pending.has(active) ? "Saving…" : "I got this ✓"}
                 </button>
+                {/* Finished this format: go straight to one not done yet */}
+                {completed.has(active) && (() => {
+                  const next = nextUp(active);
+                  return next ? (
+                    <button onClick={() => openModality(next.key)}
+                      className="rounded-xl bg-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-fuchsia-700">
+                      Next: {next.icon} {next.label} →
+                    </button>
+                  ) : (
+                    <button onClick={() => setActive(null)}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">
+                      🎉 All formats done
+                    </button>
+                  );
+                })()}
               </div>
               {renderActive()}
             </div>
@@ -183,11 +259,49 @@ export default function StudentLesson({
           <LessonChat
             lessonId={project.id}
             classroomId={classroom.id}
-            student={student}
+            student={student ?? null}
             lessonTitle={bp.title}
           />
         </div>
       </div>
     </main>
+  );
+}
+
+function ProgressStatus({
+  mode,
+  saveStatus,
+  notice,
+}: {
+  mode: ReturnType<typeof useLessonProgress>["mode"];
+  saveStatus: ReturnType<typeof useLessonProgress>["saveStatus"];
+  notice: string | null;
+}) {
+  let text: string;
+  let tone = "text-slate-400";
+  if (notice) {
+    text = `⚠️ ${notice}`;
+    tone = "text-amber-600";
+  } else if (mode === "loading") {
+    text = "Restoring your progress…";
+  } else if (mode === "local") {
+    text = "Progress isn't being saved.";
+  } else if (saveStatus === "saving") {
+    text = "Saving…";
+  } else if (saveStatus === "error") {
+    text = "⚠️ Couldn't save your latest changes — we'll retry when you continue.";
+    tone = "text-amber-600";
+  } else {
+    text = "✓ Progress saved";
+  }
+  return (
+    <p className="mt-1 text-xs">
+      <span className={tone} role="status" aria-live="polite">{text}</span>
+      {mode === "local" && (
+        <Link href="/student" className="ml-2 font-semibold text-fuchsia-600 hover:underline">
+          Join the class →
+        </Link>
+      )}
+    </p>
   );
 }

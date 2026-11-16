@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getLocalStudent, setLocalStudent, clearLocalStudent, LocalStudent } from "@/lib/studentClient";
+import { joinClass } from "@/lib/joinClass";
 
 const SUGGESTED = ["Music", "Video games", "Sports", "Movies", "Anime", "Art", "Coding", "Science", "Space", "Animals", "Cooking", "Fashion", "Cars", "Nature"];
 
@@ -29,9 +30,19 @@ export default function StudentOnboarding() {
     const s = getLocalStudent();
     if (!s) { setChecking(false); return; }
     setExisting(s);
-    fetch(`/api/students?id=${s.id}`)
-      .then((r) => r.json())
-      .then((j) => { if (j.classrooms) setClassrooms(j.classrooms); })
+    fetch(`/api/students?id=${encodeURIComponent(s.id)}`)
+      .then(async (r) => {
+        if (r.status === 404) {
+          // This browser remembers a student the server no longer has (e.g. data was
+          // reset). Forget it so the form creates a fresh profile instead of failing.
+          clearLocalStudent();
+          setExisting(null);
+          return;
+        }
+        const j = await r.json();
+        if (j.classrooms) setClassrooms(j.classrooms);
+      })
+      .catch(() => {})
       .finally(() => setChecking(false));
   }, []);
 
@@ -42,7 +53,9 @@ export default function StudentOnboarding() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (!name.trim()) return setError("What's your name?");
+    // A returning student doesn't retype their name; the join form only asks for the code.
+    const effectiveName = name.trim() || existing?.name || "";
+    if (!effectiveName) return setError("What's your name?");
     if (!joinCode.trim()) return setError("Enter the class join code from your professor.");
     const allInterests = [...interests, ...custom.split(",").map((s) => s.trim()).filter(Boolean)];
 
@@ -50,25 +63,10 @@ export default function StudentOnboarding() {
     setStep(0);
     const ticker = setInterval(() => setStep((s) => Math.min(s + 1, LOADING_STEPS.length - 1)), 1600);
     try {
-      // If there's already a local student, enroll them; otherwise create.
-      const local = getLocalStudent();
-      let res: Response, json: any;
-      if (local) {
-        res = await fetch("/api/students", {
-          method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ student_id: local.id, join_code: joinCode }),
-        });
-        json = await res.json();
-      } else {
-        res = await fetch("/api/students", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, join_code: joinCode, interests: allInterests }),
-        });
-        json = await res.json();
-      }
-      if (!res.ok) throw new Error(json.error || "Something went wrong");
-      setLocalStudent({ id: json.student.id, name: json.student.name });
-      router.push(`/student/${json.classroom_id}`);
+      // Known student -> enroll (keeps their progress); unknown/stale -> create.
+      const result = await joinClass({ remembered: getLocalStudent(), name: effectiveName, joinCode, interests: allInterests });
+      setLocalStudent(result.student);
+      router.push(`/student/${result.classroom_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
       setLoading(false);
@@ -109,7 +107,6 @@ export default function StudentOnboarding() {
 
         <form onSubmit={submit} className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="font-bold">Join another class</h3>
-          <input value={name || existing.name} onChange={(e) => setName(e.target.value)} className="mt-3 hidden" />
           <div className="mt-3 flex gap-2">
             <input value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="JOIN CODE"
               className="w-40 rounded-xl border border-slate-200 p-2.5 font-mono uppercase tracking-widest outline-none focus:border-fuchsia-400" />

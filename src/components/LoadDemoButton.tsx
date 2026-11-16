@@ -9,7 +9,7 @@ export default function LoadDemoButton({ variant = "primary" }: { variant?: "pri
   const [error, setError] = useState("");
 
   async function loadDemo() {
-    if (!confirm("Load the demo classroom? This replaces any existing data with a preloaded demo (classroom, lessons, students, and activity).")) return;
+    if (!confirm("Add the demo classroom? It comes with lessons, students and activity. Your existing classrooms, students and progress are kept.")) return;
     setLoading(true);
     setError("");
     try {

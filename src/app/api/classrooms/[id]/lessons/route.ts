@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { parseDocument } from "@/lib/parse";
 import { createLearningBlueprint } from "@/lib/generators";
 import { saveProject } from "@/lib/store";
-import { getClassroom, saveClassroom } from "@/lib/db";
+import { getClassroom, updateClassroom } from "@/lib/db";
 import { Project, StudentProfile } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -50,8 +50,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     };
     saveProject(project);
 
-    classroom.lesson_ids.push(project.id);
-    saveClassroom(classroom);
+    // Re-read the class: other lessons may have been added while this one was being built.
+    updateClassroom(classroom.id, (current) => {
+      if (!current.lesson_ids.includes(project.id)) current.lesson_ids.push(project.id);
+    });
 
     return NextResponse.json({ lesson: { id: project.id, title: blueprint.title } });
   } catch (err) {

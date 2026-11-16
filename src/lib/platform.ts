@@ -4,6 +4,8 @@ import { getProject } from "./store";
 import { OutputType, Student, ChatMessage } from "./types";
 import { ravenRun } from "./raven";
 import { hasEverMind } from "./evermind";
+import { uniqueCompletions } from "./progressShared";
+import { LessonProgressSummary, summarizeStudentProgress } from "./progress";
 
 const MODALITY_LABELS: Record<OutputType, string> = {
   mindmap: "Mind Map",
@@ -120,6 +122,8 @@ export interface ClassroomAnalytics {
 
 export function buildClassroomAnalytics(classroomId: string): ClassroomAnalytics {
   const events = getEvents(classroomId);
+  // Each student/lesson/format completion counts once, however many events exist.
+  const done = uniqueCompletions(events);
   const students = listStudentsInClassroom(classroomId);
   const modalities = Object.keys(MODALITY_LABELS) as OutputType[];
 
@@ -129,7 +133,9 @@ export function buildClassroomAnalytics(classroomId: string): ClassroomAnalytics
 
   events.forEach((e) => {
     if (e.type === "modality_open" && e.modality) opens[e.modality]++;
-    if (e.type === "modality_complete" && e.modality) completions[e.modality]++;
+  });
+  done.forEach((e) => {
+    if (e.modality && e.modality in completions) completions[e.modality]++;
   });
 
   const modality_opens = modalities
@@ -167,7 +173,7 @@ export function buildClassroomAnalytics(classroomId: string): ClassroomAnalytics
       name: s.name,
       interests: s.interests,
       opens: se.filter((e) => e.type === "modality_open").length,
-      completions: se.filter((e) => e.type === "modality_complete").length,
+      completions: done.filter((e) => e.student_id === s.id).length,
       questions: se.filter((e) => e.type === "question").length,
       favorite: fav ? MODALITY_LABELS[fav[0] as OutputType] : "—",
     };
@@ -208,13 +214,18 @@ export interface StudentDetail {
   modality_breakdown: { modality: OutputType; label: string; opens: number; completions: number }[];
   questions: { text: string; lesson_title: string; at: string }[];
   lessons: { lesson_id: string; title: string; opens: number; completions: number }[];
+  // Saved progress per lesson of the classroom (same data the student sees).
+  progress: LessonProgressSummary[];
   matches_guess: boolean | null;
 }
 
 export function buildStudentDetail(classroomId: string, studentId: string): StudentDetail | null {
   const student = getStudent(studentId);
   if (!student) return null;
-  const events = getEvents(classroomId).filter((e) => e.student_id === studentId);
+  const classroom = getClassroom(classroomId);
+  const classEvents = getEvents(classroomId);
+  const events = classEvents.filter((e) => e.student_id === studentId);
+  const done = uniqueCompletions(events);
   const modalities = Object.keys(MODALITY_LABELS) as OutputType[];
 
   const opens: Record<string, number> = {};
@@ -222,7 +233,9 @@ export function buildStudentDetail(classroomId: string, studentId: string): Stud
   modalities.forEach((m) => { opens[m] = 0; comps[m] = 0; });
   events.forEach((e) => {
     if (e.type === "modality_open" && e.modality) opens[e.modality]++;
-    if (e.type === "modality_complete" && e.modality) comps[e.modality]++;
+  });
+  done.forEach((e) => {
+    if (e.modality && e.modality in comps) comps[e.modality]++;
   });
 
   const modality_breakdown = modalities
@@ -242,7 +255,9 @@ export function buildStudentDetail(classroomId: string, studentId: string): Stud
     if (!e.lesson_id) return;
     lessonMap[e.lesson_id] = lessonMap[e.lesson_id] || { opens: 0, comps: 0 };
     if (e.type === "modality_open") lessonMap[e.lesson_id].opens++;
-    if (e.type === "modality_complete") lessonMap[e.lesson_id].comps++;
+  });
+  done.forEach((e) => {
+    if (e.lesson_id) lessonMap[e.lesson_id].comps++;
   });
   const lessons = Object.entries(lessonMap)
     .map(([lesson_id, v]) => ({ lesson_id, title: getProject(lesson_id)?.blueprint.title || "Lesson", opens: v.opens, completions: v.comps }))
@@ -256,7 +271,7 @@ export function buildStudentDetail(classroomId: string, studentId: string): Stud
     greeting: student.vibe?.greeting,
     totals: {
       opens: events.filter((e) => e.type === "modality_open").length,
-      completions: events.filter((e) => e.type === "modality_complete").length,
+      completions: done.length,
       questions: questions.length,
       lessons_opened: events.filter((e) => e.type === "lesson_open").length,
     },
@@ -264,6 +279,7 @@ export function buildStudentDetail(classroomId: string, studentId: string): Stud
     modality_breakdown,
     questions,
     lessons,
+    progress: classroom ? summarizeStudentProgress(student, classroom, classEvents) : [],
     matches_guess: actual && student.vibe?.favorite_modality_guess ? actual.modality === student.vibe.favorite_modality_guess : null,
   };
 }

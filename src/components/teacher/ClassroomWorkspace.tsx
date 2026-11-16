@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Classroom, OutputType } from "@/lib/types";
 import LessonUploader from "./LessonUploader";
@@ -28,15 +28,35 @@ interface StudentLite {
 export default function ClassroomWorkspace({
   classroom,
   lessons,
-  students,
+  students: initialStudents,
 }: {
   classroom: Classroom;
   lessons: LessonLite[];
   students: StudentLite[];
 }) {
+  // Students can join while this page is open: keep the roster fresh.
+  const [students, setStudents] = useState<StudentLite[]>(initialStudents);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshStudents = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const res = await fetch(`/api/classrooms/${classroom.id}`, { cache: "no-store" });
+      if (res.ok) {
+        const j = (await res.json()) as { students?: (Omit<StudentLite, "favorite_modality_guess"> & { favorite_modality_guess?: OutputType | null })[] };
+        if (j.students) setStudents(j.students.map((s) => ({ ...s, favorite_modality_guess: s.favorite_modality_guess ?? null })));
+      }
+    } catch {
+      /* keep the current list */
+    } finally {
+      setRefreshing(false);
+    }
+  }, [classroom.id]);
   const [tab, setTab] = useState<"lessons" | "students" | "messages" | "insights" | "assistant">("lessons");
   const [copied, setCopied] = useState(false);
   const [openStudent, setOpenStudent] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab === "students" || tab === "messages") refreshStudents();
+  }, [tab, refreshStudents]);
 
   function copyCode() {
     navigator.clipboard?.writeText(classroom.join_code);
@@ -128,6 +148,12 @@ export default function ClassroomWorkspace({
         )}
 
         {tab === "students" && (
+          <div>
+          <div className="mb-3 flex justify-end">
+            <button onClick={refreshStudents} disabled={refreshing} className="text-xs text-slate-400 hover:text-violet-600 disabled:opacity-50">
+              {refreshing ? "Refreshing…" : "↻ refresh"}
+            </button>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {students.length === 0 && (
               <p className="col-span-full rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-400">
@@ -154,9 +180,10 @@ export default function ClassroomWorkspace({
                 {s.favorite_modality_guess && (
                   <p className="mt-2 text-xs text-slate-400">Likely loves: <span className="font-medium text-violet-600">{s.favorite_modality_guess.replace("_", " ")}</span></p>
                 )}
-                <p className="mt-2 text-xs font-medium text-fuchsia-500">View metrics & questions →</p>
+                <p className="mt-2 text-xs font-medium text-fuchsia-500">View progress & questions →</p>
               </button>
             ))}
+          </div>
           </div>
         )}
 

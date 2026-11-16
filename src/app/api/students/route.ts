@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { getClassroomByCode, getClassroom, saveStudent, getStudent } from "@/lib/db";
+import { getClassroomByCode, getClassroom, saveStudent, getStudent, normalizeJoinCode } from "@/lib/db";
 import { generateStudentVibe } from "@/lib/platform";
 import { generateImage } from "@/lib/runpod";
 import { Student } from "@/lib/types";
@@ -11,9 +11,11 @@ export const maxDuration = 120;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const name = (body.name || "").trim();
-    const interests: string[] = (body.interests || []).filter((s: string) => s && s.trim()).map((s: string) => s.trim());
-    const joinCode = (body.join_code || "").trim();
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const interests: string[] = (Array.isArray(body.interests) ? body.interests : [])
+      .filter((s: unknown): s is string => typeof s === "string" && s.trim() !== "")
+      .map((s: string) => s.trim());
+    const joinCode = normalizeJoinCode(body.join_code);
 
     if (!name) return NextResponse.json({ error: "Please enter your name" }, { status: 400 });
 
@@ -46,10 +48,11 @@ export async function POST(req: NextRequest) {
 
 // Enroll an existing student into another classroom by code.
 export async function PATCH(req: NextRequest) {
-  const body = await req.json();
-  const student = getStudent(body.student_id || "");
-  if (!student) return NextResponse.json({ error: "Student not found" }, { status: 404 });
-  const classroom = getClassroomByCode(body.join_code || "");
+  const body = await req.json().catch(() => ({}));
+  const student = typeof body.student_id === "string" ? getStudent(body.student_id) : null;
+  // `code` lets the client tell "this browser remembers a deleted student" apart from a bad join code.
+  if (!student) return NextResponse.json({ error: "Student not found", code: "student_not_found" }, { status: 404 });
+  const classroom = getClassroomByCode(normalizeJoinCode(body.join_code));
   if (!classroom) return NextResponse.json({ error: "No classroom found for that join code" }, { status: 404 });
   if (!student.classroom_ids.includes(classroom.id)) {
     student.classroom_ids.push(classroom.id);

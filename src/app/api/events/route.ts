@@ -1,25 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logEvent } from "@/lib/db";
 import { getProject } from "@/lib/store";
-import { remember } from "@/lib/evermind";
-import { EventType, LearningEvent, OutputType } from "@/lib/types";
-
-function describeEvent(e: LearningEvent): string {
-  const lesson = e.lesson_id ? getProject(e.lesson_id)?.blueprint.title : undefined;
-  const where = lesson ? ` in lesson "${lesson}"` : "";
-  switch (e.type) {
-    case "lesson_open":
-      return `${e.student_name} opened${where || " a lesson"}.`;
-    case "modality_open":
-      return `${e.student_name} started learning through the ${e.modality?.replace("_", " ")} activity${where}.`;
-    case "modality_complete":
-      return `${e.student_name} completed the ${e.modality?.replace("_", " ")} activity${where}.`;
-    case "question":
-      return `${e.student_name} asked${where}: "${e.text}"`;
-    case "game_result":
-      return `${e.student_name} scored ${e.value ?? "?"} in the learning game${where}.`;
-  }
-}
+import { rememberEvent } from "@/lib/eventMemory";
+import { ProgressError, recordCompletion } from "@/lib/progress";
+import { EventType, OutputType } from "@/lib/types";
 
 // Fire-and-forget event logging from the student experience -> feeds professor observability.
 export async function POST(req: NextRequest) {
@@ -28,6 +12,22 @@ export async function POST(req: NextRequest) {
     if (!b.classroom_id || !b.student_id || !b.type) {
       return NextResponse.json({ error: "classroom_id, student_id and type are required" }, { status: 400 });
     }
+
+    // Completions are idempotent per (student, lesson, format): route them through
+    // the progress store so repeated/legacy requests can't inflate teacher totals.
+    if (b.type === "modality_complete") {
+      if (typeof b.lesson_id !== "string" || !b.lesson_id) {
+        return NextResponse.json({ error: "lesson_id is required for completions" }, { status: 400 });
+      }
+      const lesson = getProject(b.lesson_id);
+      if (lesson && lesson.classroom_id !== b.classroom_id) {
+        return NextResponse.json({ error: "Lesson does not belong to that classroom" }, { status: 400 });
+      }
+      const result = recordCompletion(b.student_id, b.lesson_id, b.modality);
+      if (result.event) rememberEvent(result.event);
+      return NextResponse.json({ ok: true, id: result.event?.id ?? null, duplicate: !result.newly_completed });
+    }
+
     const event = logEvent({
       classroom_id: b.classroom_id,
       student_id: b.student_id,
@@ -38,21 +38,11 @@ export async function POST(req: NextRequest) {
       value: typeof b.value === "number" ? b.value : undefined,
       text: b.text,
     });
-    // Long-term memory: the professor's AI can recall this activity forever.
-    remember(
-      {
-        classroomId: event.classroom_id,
-        studentId: event.student_id,
-        senderId: event.student_id,
-        senderName: event.student_name,
-        role: "user",
-        text: describeEvent(event),
-      },
-      { flush: event.type === "question" || event.type === "game_result", sessionId: event.lesson_id }
-    );
+    rememberEvent(event);
 
     return NextResponse.json({ ok: true, id: event.id });
   } catch (err) {
+    if (err instanceof ProgressError) return NextResponse.json({ error: err.message }, { status: err.status });
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });
   }
 }
