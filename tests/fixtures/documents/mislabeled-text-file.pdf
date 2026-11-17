@@ -1,0 +1,1 @@
+This is a plain text file that has been given a .pdf extension. It does not start with the %PDF signature, so it is not a real PDF document and should be rejected with a clear message rather than being parsed or stored.

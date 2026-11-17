@@ -32,6 +32,12 @@ export function updateProject(id: string, mutate: (current: Project) => void): P
   return current;
 }
 
+/** Remove a lesson file (used only to undo a lesson that could not be attached to its classroom). */
+export function deleteProject(id: string): void {
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) return;
+  fs.rmSync(path.join(projectsDir(), `${id}.json`), { force: true });
+}
+
 export function getProject(id: string): Project | null {
   // Guard against path traversal in the id
   if (!/^[a-zA-Z0-9-]+$/.test(id)) return null;

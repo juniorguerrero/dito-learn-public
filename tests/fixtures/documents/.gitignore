@@ -1,0 +1,2 @@
+# Oversized fixtures are generated on demand (npm run fixtures:documents -- --oversized); never commit them.
+generated/

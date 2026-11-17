@@ -1,47 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { parseDocument } from "@/lib/parse";
+import { readLessonSubmission, uploadErrorResponse } from "@/lib/documentIntake";
 import { createLearningBlueprint } from "@/lib/generators";
-import { saveProject } from "@/lib/store";
+import { deleteProject, saveProject } from "@/lib/store";
 import { getClassroom, updateClassroom } from "@/lib/db";
 import { Project, StudentProfile } from "@/lib/types";
 
 export const maxDuration = 120;
 
+const field = (form: FormData, key: string) => {
+  const v = form.get(key);
+  return typeof v === "string" ? v : "";
+};
+
 // Professor uploads course material -> becomes a Lesson (Project) attached to the classroom.
+// Same validation as /api/upload (src/lib/documentIntake.ts). A rejected upload
+// creates nothing and leaves the classroom untouched.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const classroom = getClassroom(params.id);
-  if (!classroom) return NextResponse.json({ error: "Classroom not found" }, { status: 404 });
+  if (!classroom) return NextResponse.json({ error: "Classroom not found", code: "classroom_not_found" }, { status: 404 });
 
   try {
-    const form = await req.formData();
-    const file = form.get("file") as File | null;
-    const pastedText = (form.get("text") as string) || "";
+    const intake = await readLessonSubmission(req);
+    if (!intake.ok) return uploadErrorResponse(intake.error);
+    const { text, fileName, form } = intake.source;
 
     // The professor sets the *baseline* level for the class; students get personalized outputs on top.
     const profile: StudentProfile = {
-      grade_level: (form.get("grade_level") as string) || "High school",
-      goal: (form.get("goal") as string) || `Master ${classroom.subject}`,
-      preferred_style: (form.get("preferred_style") as string) || "colorful and engaging",
-      study_time: (form.get("study_time") as string) || "30 minutes",
+      grade_level: field(form, "grade_level") || "High school",
+      goal: field(form, "goal") || `Master ${classroom.subject}`,
+      preferred_style: field(form, "preferred_style") || "colorful and engaging",
+      study_time: field(form, "study_time") || "30 minutes",
     };
 
-    let documentText = pastedText.trim();
-    let sourceName = "Pasted material";
-    if (file && file.size > 0) {
-      documentText = (await parseDocument(Buffer.from(await file.arrayBuffer()), file.name)).trim();
-      sourceName = file.name;
-    }
-    if (documentText.length < 50) {
-      return NextResponse.json({ error: "Add a document or paste at least a paragraph." }, { status: 400 });
+    let blueprint;
+    try {
+      blueprint = await createLearningBlueprint(text, profile);
+    } catch (err) {
+      console.error("lesson upload: blueprint failed", err);
+      return NextResponse.json(
+        { error: "Your material was read, but the Learning Blueprint couldn't be created. Please try again.", code: "blueprint_failed" },
+        { status: 502 }
+      );
     }
 
-    const blueprint = await createLearningBlueprint(documentText, profile);
     const project: Project = {
       id: randomUUID(),
       created_at: new Date().toISOString(),
-      source_name: sourceName,
-      document_text: documentText,
+      source_name: fileName ?? "Pasted material",
+      document_text: text,
       student_profile: profile,
       blueprint,
       outputs: {},
@@ -51,13 +58,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     saveProject(project);
 
     // Re-read the class: other lessons may have been added while this one was being built.
-    updateClassroom(classroom.id, (current) => {
+    const attached = updateClassroom(classroom.id, (current) => {
       if (!current.lesson_ids.includes(project.id)) current.lesson_ids.push(project.id);
     });
+    if (!attached) {
+      // The classroom disappeared while the blueprint was being built: don't leave an orphan lesson.
+      deleteProject(project.id);
+      return NextResponse.json({ error: "Classroom not found", code: "classroom_not_found" }, { status: 404 });
+    }
 
     return NextResponse.json({ lesson: { id: project.id, title: blueprint.title } });
   } catch (err) {
     console.error("lesson upload error", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Upload failed" }, { status: 500 });
+    return NextResponse.json({ error: "The upload failed unexpectedly. Please try again.", code: "server_error" }, { status: 500 });
   }
 }

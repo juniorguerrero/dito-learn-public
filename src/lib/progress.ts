@@ -183,6 +183,8 @@ export function recordCompletion(studentId: unknown, lessonId: unknown, modality
 export interface LessonProgressSummary {
   lesson_id: string;
   title: string;
+  // Archived lessons stay in the teacher's view (clearly labelled); students don't see them.
+  archived: boolean;
   completed: OutputType[];
   flashcards: { known: number; review: number; total: number } | null;
   updated_at: string | null; // null = the student hasn't saved anything on this lesson
@@ -206,6 +208,7 @@ export function summarizeStudentProgress(student: Student, classroom: Classroom,
       return {
         lesson_id: lessonId,
         title: project.blueprint.title,
+        archived: Boolean(project.archived_at),
         completed: OUTPUT_ORDER.filter((m) => p.completed[m]),
         flashcards: p.flashcards && total > 0 ? { known: p.flashcards.known.length, review: p.flashcards.review.length, total } : null,
         updated_at: stored ? stored.updated_at : null,

@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "load-test": "node scripts/load-test.mjs"
+    "load-test": "node scripts/load-test.mjs",
+    "fixtures:documents": "node scripts/generate-document-fixtures.mjs",
+    "smoke:uploads": "node scripts/upload-smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

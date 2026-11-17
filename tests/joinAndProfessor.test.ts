@@ -123,8 +123,8 @@ describe("professor: seeing each student's saved progress", () => {
 
     const d = await detail(classroom.id, ada.id);
     expect(d.progress).toEqual([
-      { lesson_id: lessonA.id, title: lessonA.blueprint.title, completed: ["flashcards", "game"], flashcards: { known: 2, review: 1, total }, updated_at: expect.any(String) },
-      { lesson_id: lessonB.id, title: lessonB.blueprint.title, completed: [], flashcards: null, updated_at: null },
+      { lesson_id: lessonA.id, title: lessonA.blueprint.title, archived: false, completed: ["flashcards", "game"], flashcards: { known: 2, review: 1, total }, updated_at: expect.any(String) },
+      { lesson_id: lessonB.id, title: lessonB.blueprint.title, archived: false, completed: [], flashcards: null, updated_at: null },
     ]);
   });
 

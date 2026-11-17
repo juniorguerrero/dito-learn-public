@@ -188,6 +188,11 @@ export interface Project {
   // Platform linkage (a Project is a "Lesson" once attached to a classroom)
   classroom_id?: string;
   professor_name?: string;
+  // Teacher lesson management (src/lib/lessons.ts). Archiving only sets this flag:
+  // the lesson stays in classroom.lesson_ids (same position), with its source,
+  // generated formats and every student's progress untouched.
+  archived_at?: string | null; // ISO time it was archived; absent/null = active
+  metadata_updated_at?: string; // last teacher edit of title/summary
 }
 
 // ---------- Platform: classrooms, students, observability ----------

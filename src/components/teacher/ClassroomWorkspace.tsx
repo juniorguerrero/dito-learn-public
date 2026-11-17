@@ -1,23 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Classroom, OutputType } from "@/lib/types";
+import type { LessonSummary } from "@/lib/lessons";
 import LessonUploader from "./LessonUploader";
+import LessonManager from "./LessonManager";
 import InsightsPanel from "./InsightsPanel";
 import StudentDetailModal from "./StudentDetailModal";
 import ProfessorChat from "./ProfessorChat";
 import MessagesPanel from "./MessagesPanel";
 
-interface LessonLite {
-  id: string;
-  title: string;
-  subject: string;
-  summary: string;
-  source_name: string;
-  generated: string[];
-  concept_count: number;
-}
 interface StudentLite {
   id: string;
   name: string;
@@ -27,13 +21,37 @@ interface StudentLite {
 
 export default function ClassroomWorkspace({
   classroom,
-  lessons,
+  lessons: initialActive,
+  archivedLessons: initialArchived,
   students: initialStudents,
 }: {
   classroom: Classroom;
-  lessons: LessonLite[];
+  lessons: LessonSummary[];
+  archivedLessons: LessonSummary[];
   students: StudentLite[];
 }) {
+  const router = useRouter();
+  // All lessons by id; active/archived are derived in the classroom's original order.
+  const byId = (list: LessonSummary[]) => Object.fromEntries(list.map((l) => [l.id, l]));
+  const [lessonsById, setLessonsById] = useState<Record<string, LessonSummary>>(() => byId([...initialActive, ...initialArchived]));
+  useEffect(() => {
+    // New server data (e.g. after router.refresh()) is the source of truth.
+    setLessonsById(byId([...initialActive, ...initialArchived]));
+  }, [initialActive, initialArchived]);
+  const ordered = useMemo(() => {
+    const pos = new Map(classroom.lesson_ids.map((id, i) => [id, i]));
+    return Object.values(lessonsById).sort((a, b) => (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity));
+  }, [lessonsById, classroom.lesson_ids]);
+  const lessons = ordered.filter((l) => !l.archived_at);
+  const archivedLessons = ordered.filter((l) => l.archived_at);
+  const onLessonChanged = useCallback(
+    (l: LessonSummary) => {
+      setLessonsById((m) => ({ ...m, [l.id]: l }));
+      router.refresh(); // keep server-rendered views (counts, other pages' cache) in step
+    },
+    [router]
+  );
+
   // Students can join while this page is open: keep the roster fresh.
   const [students, setStudents] = useState<StudentLite[]>(initialStudents);
   const [refreshing, setRefreshing] = useState(false);
@@ -72,7 +90,9 @@ export default function ClassroomWorkspace({
         <div>
           <h1 className="text-2xl font-bold">{classroom.name}</h1>
           <p className="mt-0.5 text-slate-500">
-            {classroom.subject} · {classroom.professor_name} · {students.length} students · {lessons.length} lessons
+            {classroom.subject} · {classroom.professor_name} · {students.length} students ·{" "}
+            <span data-testid="lesson-count">{lessons.length} {lessons.length === 1 ? "lesson" : "lessons"}</span>
+            {archivedLessons.length > 0 && <span data-testid="archived-count"> · {archivedLessons.length} archived</span>}
           </p>
         </div>
         <button
@@ -109,41 +129,7 @@ export default function ClassroomWorkspace({
         {tab === "lessons" && (
           <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
             <LessonUploader classroomId={classroom.id} />
-            <div className="space-y-3">
-              {lessons.length === 0 && (
-                <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-400">
-                  No lessons yet — upload your first piece of course material.
-                </p>
-              )}
-              {lessons.map((l) => (
-                <div key={l.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-bold">{l.title}</h3>
-                      <p className="mt-0.5 text-xs text-slate-400">{l.source_name} · {l.concept_count} concepts</p>
-                    </div>
-                    <Link
-                      href={`/dashboard/${l.id}`}
-                      className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"
-                    >
-                      Open & generate →
-                    </Link>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-600 line-clamp-2">{l.summary}</p>
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {l.generated.length === 0 ? (
-                      <span className="text-xs text-amber-500">⚠ nothing generated yet — students see an empty lesson</span>
-                    ) : (
-                      l.generated.map((g) => (
-                        <span key={g} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
-                          ✓ {g.replace("_", " ")}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <LessonManager classroomId={classroom.id} active={lessons} archived={archivedLessons} onLessonChanged={onLessonChanged} />
           </div>
         )}
 

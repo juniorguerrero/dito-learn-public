@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listClassrooms, listStudentsInClassroom } from "@/lib/db";
+import { classroomLessons } from "@/lib/lessons";
 import CreateClassroom from "@/components/teacher/CreateClassroom";
 import LoadDemoButton from "@/components/LoadDemoButton";
 
@@ -31,6 +32,7 @@ export default function TeachPage() {
         )}
         {classrooms.map((c) => {
           const students = listStudentsInClassroom(c.id).length;
+          const lessons = classroomLessons(c);
           return (
             <Link
               key={c.id}
@@ -44,7 +46,7 @@ export default function TeachPage() {
               <h2 className="mt-3 font-bold">{c.name}</h2>
               <p className="mt-1 text-sm text-slate-500 line-clamp-2">{c.description || "No description"}</p>
               <div className="mt-4 flex gap-4 text-xs text-slate-400">
-                <span>📚 {c.lesson_ids.length} lessons</span>
+                <span>📚 {lessons.active.length} lessons{lessons.archived.length > 0 ? ` · ${lessons.archived.length} archived` : ""}</span>
                 <span>🧑‍🎓 {students} students</span>
               </div>
             </Link>

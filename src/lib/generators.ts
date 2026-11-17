@@ -12,6 +12,7 @@ import {
   SongSpecData,
 } from "./types";
 import * as mocks from "./mocks";
+import { MAX_LESSON_TEXT_CHARS } from "./uploadRules";
 
 // Mock mode answers instantly, which hides timing problems that only show up
 // when generation takes seconds (as it does with Claude). For realistic testing
@@ -29,6 +30,9 @@ export async function createLearningBlueprint(
   profile: StudentProfile
 ): Promise<LearningBlueprint> {
   if (!hasClaudeKey()) return mockResult(mocks.mockBlueprint(documentText, profile));
+
+  // Uploads are rejected above MAX_LESSON_TEXT_CHARS (src/lib/uploadRules.ts),
+  // so this slice is only a safety net and never cuts accepted material.
 
   const prompt = `Analyze this learning document and produce a Learning Blueprint as JSON.
 
@@ -56,7 +60,7 @@ Adapt vocabulary and depth to the student's grade level. Do NOT just summarize â
 
 DOCUMENT:
 """
-${documentText.slice(0, 60000)}
+${documentText.slice(0, MAX_LESSON_TEXT_CHARS)}
 """`;
 
   return claudeJSON<LearningBlueprint>(BLUEPRINT_SYSTEM, prompt);

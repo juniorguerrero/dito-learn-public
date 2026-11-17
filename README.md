@@ -43,8 +43,10 @@ base64, save the asset to `public/generated/`.
   local mock fallback.
 - **Storage:** filesystem JSON store in `./data/projects` (`src/lib/store.ts`) — swap for Supabase
   without touching the API surface.
-- **Parsing:** `pdf-parse` (PDF), `mammoth` (DOCX), raw text otherwise (`src/lib/parse.ts`).
-  Docling is the production upgrade path.
+- **Parsing:** `pdf-parse` (PDF) and `mammoth` (DOCX) in an isolated worker thread
+  (`src/workers/parse-document.worker.mjs`, driven by `src/lib/parse.ts`); TXT / Markdown are decoded
+  as strict UTF-8. See [Uploading lesson material](#uploading-lesson-material). Docling is the
+  production upgrade path.
 - **Game:** Phaser 3 stage (animated hero + FX) overlaid with a React-driven quiz/matching/boss
   quest (`src/components/tabs/GameTab.tsx`).
 
@@ -60,6 +62,108 @@ POST /api/generate/{image,video,tts,music}  -> direct model wrappers
 GET  /api/lessons/[id]/progress?student_id=  -> { progress } saved progress for one student + lesson
 PUT  /api/lessons/[id]/progress              -> { student_id, rev, flashcards } saves flashcard choices + position
 POST /api/lessons/[id]/progress/complete     -> { student_id, modality } idempotent "I got this"
+```
+
+## Uploading lesson material
+
+Both upload paths — the standalone page `/upload` (`POST /api/upload`) and the teacher's classroom
+uploader (`POST /api/classrooms/[id]/lessons`) — use the same rules (`src/lib/uploadRules.ts`, shared
+by browser and server) and the same server intake (`src/lib/documentIntake.ts`).
+
+| Rule | Limit / behavior |
+| --- | --- |
+| File types | **PDF, DOCX, TXT, Markdown** (`.pdf`, `.docx`, `.txt`, `.md`, `.markdown`). Legacy `.doc`, images, RTF and anything else are refused with a message saying what to do instead. |
+| File size | **10 MiB** (10,485,760 bytes), checked on the file's *actual* bytes. The request body is read with a byte cap (10 MiB + 512 KiB for form fields) and reading stops as soon as it is exceeded; a declared `Content-Length` over the cap is refused before reading. |
+| Lesson text | **50 to 60,000 characters** of extracted text — exactly what the Learning Blueprint reads, so nothing accepted is silently left out. Longer material is rejected with a request to split it. |
+| Either / or | A file **or** pasted text. Submitting both is rejected with a request to choose one. |
+| Text files | Must be **UTF-8** (a UTF-8 BOM is fine). Windows-1252/Latin-1 or UTF-16 files get instructions for re-saving as UTF-8. Binary content with a `.txt`/`.md` name is refused. |
+| Real content | PDF must start with `%PDF`, DOCX must be a complete ZIP with Word parts; a file whose bytes don't match its name is refused. Damaged, password-protected and image-only (scanned) PDFs each get their own explanation — scans need selectable text, i.e. OCR first. |
+
+**How the 60,000-character limit is measured:** on the extracted text *after* normalization (byte-order
+mark removed, line endings unified to `\n`, control characters removed, trailing spaces trimmed, 3+
+blank lines collapsed to one, ends trimmed; PDF page markers are never added). The count is the
+JavaScript string length (UTF-16 code units): letters — including accented ones — digits, spaces and
+punctuation count 1; most emoji count 2. Pasted text is measured the same way and the upload forms
+show the live count.
+
+**Errors:** every rejection returns `{ error, code }` with 400 (bad request / both inputs / empty),
+413 (too large), 415 (wrong type or binary) or 422 (unreadable content, no text, too long, parse
+stopped). Internal parser messages go to the server log only. Nothing is written unless the upload
+is accepted and the blueprint was built; a rejected upload never creates a lesson or changes
+existing data.
+
+**Parsing is contained.** Each PDF/DOCX is parsed in its own worker thread (plain JS file loaded from
+disk, never bundled by Next.js — bundling pdf-parse is what broke PDF uploads in `next dev` and
+`next start` before):
+
+- a **20 s deadline** (`DITO_PARSE_TIMEOUT_MS`); on timeout the thread is *terminated* (V8 stops it even
+  in a tight loop) and the teacher is told only after it has exited;
+- **V8 heap limits** per worker (256 MB old / 32 MB young generation); exceeding them stops the worker;
+- at most **2 parses at once**, 8 waiting; beyond that the upload gets 503 "try again";
+- PDFs are read 10 pages at a time and reading **stops once the text read so far exceeds 60,000
+  characters after normalization** — the same measure as the limit itself (blank pages, for example,
+  add newlines that normalization removes, so raw length would reject documents that fit). Stopping
+  early is safe because normalization never makes a longer text shorter than its beginning;
+- DOCX files whose Word XML would unpack to more than 32 MB are refused before parsing.
+
+Remaining limitations: worker threads share the server process, so memory outside the V8 heap
+(ArrayBuffers, native allocations inside pdf.js) is not capped by the heap limits, and a crash in
+native code would affect the whole server; running the parser in a separate OS process (with an OS
+memory limit) would close that gap. The upload body (≤ 10.5 MiB) is held in memory while it is
+validated. The lesson tutor still reads only the first 12,000 characters of a lesson
+(`lessonChat`), which is unchanged here.
+
+Checking uploads:
+
+```bash
+npm test                                   # unit + route tests (both upload routes, boundaries, containment)
+npm run fixtures:documents -- --at-limit   # optional: exactly-10-MiB DOCX for the HTTP boundary check
+npm run fixtures:documents -- --oversized  # optional: 10 MiB + 1 byte file
+DITO_DATA_DIR=$(mktemp -d) npm run dev     # or: npm run build && DITO_DATA_DIR=$(mktemp -d) npm start
+BASE=http://localhost:3000 npm run smoke:uploads            # every fixture, both routes, real server; prints "<passed>/<total> checks passed"
+BASE=http://localhost:3000 python3 tests/browser/upload_workflows.py   # browser workflows (Playwright for Python)
+```
+
+Synthetic test documents (valid and invalid) are in `tests/fixtures/documents/` — see its README.
+
+## Managing lessons (teacher)
+
+On a classroom page (`/teacher/[id]`) each lesson card has **Edit**, **Archive** and, for archived
+lessons, **Restore** (`src/components/teacher/LessonManager.tsx`, `src/lib/lessons.ts`).
+
+```
+PATCH /api/classrooms/[id]/lessons/[lessonId]   { title?, summary?, archived? } -> { lesson, changed }
+GET   /api/classrooms/[id]/lessons/[lessonId]   -> { lesson }
+GET   /api/classrooms/[id]                      -> { classroom, lessons (active), archived_lessons, students }
+```
+
+- **Edit title / summary.** Title 1–120 characters (one line), summary 1–1,000 characters. The new
+  text is what teachers and students see everywhere (lists, lesson page, progress views, tutor).
+  Nothing is regenerated: the lesson id, source text, generated formats and every student's progress
+  stay as they are.
+  **Limitation:** formats generated *before* the edit keep the wording they were made with — e.g.
+  the title in the mind map's centre node, a podcast intro or song lyrics. Regenerating a format from
+  the lesson dashboard uses the new title; the edit form says this.
+- **Archive.** Students no longer see the lesson in their class, and opening a link to it shows an
+  "archived" notice instead of the lesson. A student who already has it open can keep working: saves
+  and "I got this" are still recorded. Teachers keep the lesson under "Archived lessons" and keep its
+  progress history in each student's detail view, labelled *Archived*. Class analytics keep all
+  history.
+- **Restore** puts the lesson back in its original position with all progress, including anything
+  saved while it was archived.
+- **Safe to repeat.** Archiving an archived lesson (or restoring an active one, or saving unchanged
+  text) writes nothing and keeps the original archive time, so double-clicks, retries and several
+  open tabs can't duplicate or reorder anything. Archiving only sets `archived_at` on the lesson —
+  `classroom.lesson_ids` is never modified.
+- **Isolation.** A lesson can only be changed through its own classroom (the classroom must list it
+  *and* the lesson must belong to it); anything else is a 404 and changes nothing.
+
+There is no teacher login in this app (unchanged), so like the other teacher routes these endpoints
+are open to anyone who can reach the server.
+
+```bash
+npm test                                                       # incl. tests/lessonManagement.api.test.ts
+BASE=http://localhost:3000 python3 tests/browser/lesson_management.py  # browser workflow (Playwright for Python)
 ```
 
 ## Student progress
@@ -136,7 +240,7 @@ Tests set `DITO_DATA_DIR` to a temp directory, so they never touch `./data`.
 
 ## Pages
 
-- `/upload` — drop a file or paste text, set grade level / goal / style / study time.
+- `/upload` — drop or choose a file (or paste text), set grade level / goal / style / study time.
 - `/dashboard/[id]` — blueprint overview + tabs for all eight outputs, each with its own
   generation status and loading state.
 

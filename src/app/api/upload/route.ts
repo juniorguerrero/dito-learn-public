@@ -1,48 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { parseDocument } from "@/lib/parse";
+import { readLessonSubmission, uploadErrorResponse } from "@/lib/documentIntake";
 import { createLearningBlueprint } from "@/lib/generators";
 import { saveProject } from "@/lib/store";
 import { Project, StudentProfile } from "@/lib/types";
 
 export const maxDuration = 120;
 
+const field = (form: FormData, key: string) => {
+  const v = form.get(key);
+  return typeof v === "string" ? v : "";
+};
+
+// Standalone upload: one file (PDF, DOCX, TXT, Markdown) *or* pasted text.
+// Validation happens first (src/lib/documentIntake.ts); nothing is saved
+// unless the material is accepted and the blueprint was built.
 export async function POST(req: NextRequest) {
   try {
-    const form = await req.formData();
-    const file = form.get("file") as File | null;
-    const pastedText = (form.get("text") as string) || "";
+    const intake = await readLessonSubmission(req);
+    if (!intake.ok) return uploadErrorResponse(intake.error);
+    const { text, fileName, form } = intake.source;
 
     const profile: StudentProfile = {
-      grade_level: (form.get("grade_level") as string) || "Middle school",
-      goal: (form.get("goal") as string) || "Understand the material",
-      preferred_style: (form.get("preferred_style") as string) || "colorful and playful",
-      study_time: (form.get("study_time") as string) || "30 minutes",
+      grade_level: field(form, "grade_level") || "Middle school",
+      goal: field(form, "goal") || "Understand the material",
+      preferred_style: field(form, "preferred_style") || "colorful and playful",
+      study_time: field(form, "study_time") || "30 minutes",
     };
 
-    let documentText = pastedText.trim();
-    let sourceName = "Pasted text";
-
-    if (file && file.size > 0) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      documentText = (await parseDocument(buffer, file.name)).trim();
-      sourceName = file.name;
-    }
-
-    if (documentText.length < 50) {
+    let blueprint;
+    try {
+      blueprint = await createLearningBlueprint(text, profile);
+    } catch (err) {
+      console.error("upload: blueprint failed", err);
       return NextResponse.json(
-        { error: "Please provide a document or paste at least a paragraph of text." },
-        { status: 400 }
+        { error: "Your material was read, but the Learning Blueprint couldn't be created. Please try again.", code: "blueprint_failed" },
+        { status: 502 }
       );
     }
-
-    const blueprint = await createLearningBlueprint(documentText, profile);
 
     const project: Project = {
       id: randomUUID(),
       created_at: new Date().toISOString(),
-      source_name: sourceName,
-      document_text: documentText,
+      source_name: fileName ?? "Pasted text",
+      document_text: text,
       student_profile: profile,
       blueprint,
       outputs: {},
@@ -52,9 +53,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ id: project.id, blueprint });
   } catch (err) {
     console.error("upload error", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Upload failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "The upload failed unexpectedly. Please try again.", code: "server_error" }, { status: 500 });
   }
 }

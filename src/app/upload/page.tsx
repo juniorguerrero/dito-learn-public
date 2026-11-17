@@ -5,7 +5,8 @@ import UploadForm from "@/components/UploadForm";
 export const dynamic = process.env.STATIC_EXPORT === "1" ? "force-static" : "force-dynamic";
 
 export default function UploadPage() {
-  const projects = listProjects();
+  // Archived classroom lessons are left out of "Recent materials" (they stay on the classroom page).
+  const projects = listProjects().filter((p) => !p.archived_at);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">

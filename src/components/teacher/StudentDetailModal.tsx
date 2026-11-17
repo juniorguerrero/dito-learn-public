@@ -137,9 +137,13 @@ export default function StudentDetailModal({
                   <h3 className="text-sm font-semibold text-slate-600">Progress by lesson</h3>
                   <div className="mt-2 space-y-1.5">
                     {data.progress.map((p) => (
-                      <div key={p.lesson_id} className="rounded-xl bg-slate-50 px-3 py-2 text-sm" data-testid="lesson-progress">
+                      <div key={p.lesson_id} className={`rounded-xl px-3 py-2 text-sm ${p.archived ? "border border-dashed border-amber-300 bg-amber-50/50" : "bg-slate-50"}`}
+                        data-testid="lesson-progress" data-archived={p.archived ? "true" : "false"}>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate">{p.title}</span>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">{p.title}</span>
+                            {p.archived && <ArchivedBadge />}
+                          </span>
                           <span className="shrink-0 text-xs text-slate-400">
                             {p.completed.length} / {Object.keys(MODALITY_ICON).length} formats done
                           </span>
@@ -176,7 +180,10 @@ export default function StudentDetailModal({
                   <div className="mt-2 space-y-1.5">
                     {data.lessons.map((l) => (
                       <div key={l.lesson_id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                        <span className="truncate pr-2">{l.title}</span>
+                        <span className="flex min-w-0 items-center gap-1.5 pr-2">
+                          <span className="truncate">{l.title}</span>
+                          {l.archived && <ArchivedBadge />}
+                        </span>
                         <span className="shrink-0 text-slate-400">{l.opens} opens · {l.completions} done</span>
                       </div>
                     ))}
@@ -188,5 +195,13 @@ export default function StudentDetailModal({
         )}
       </div>
     </div>
+  );
+}
+
+function ArchivedBadge() {
+  return (
+    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700" title="Hidden from students; progress kept">
+      Archived
+    </span>
   );
 }

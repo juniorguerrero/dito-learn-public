@@ -1,0 +1,75 @@
+{
+  "_comment": "Expected result of uploading each fixture to /api/upload or /api/classrooms/[id]/lessons (both routes behave the same). result: 'accepted' or the error code. For accepted files, the stored lesson text must contain `contains` (text from the document's last page) and, if given, be exactly `chars` characters long. Used by tests/documentFixtures.test.ts and scripts/upload-smoke.mjs.",
+  "valid-lesson.pdf": {
+    "result": "accepted",
+    "contains": "Synthetic fixture - page 2 of 2"
+  },
+  "valid-lesson.docx": {
+    "result": "accepted",
+    "contains": "synthetic test material for Dito Learn."
+  },
+  "valid-lesson.txt": {
+    "result": "accepted",
+    "contains": "synthetic test material for Dito Learn."
+  },
+  "valid-lesson.md": {
+    "result": "accepted",
+    "contains": "synthetic test material for Dito Learn."
+  },
+  "empty-file.txt": {
+    "result": "file_empty"
+  },
+  "empty-file.pdf": {
+    "result": "file_empty"
+  },
+  "whitespace-only.txt": {
+    "result": "too_short"
+  },
+  "too-short.txt": {
+    "result": "too_short"
+  },
+  "no-text-scanned.pdf": {
+    "result": "no_text_layer"
+  },
+  "damaged-truncated.pdf": {
+    "result": "damaged_file"
+  },
+  "damaged-truncated.docx": {
+    "result": "damaged_file"
+  },
+  "mislabeled-text-file.pdf": {
+    "result": "type_mismatch"
+  },
+  "unsupported-legacy-word.doc": {
+    "result": "legacy_doc"
+  },
+  "unsupported-image.png": {
+    "result": "unsupported_type"
+  },
+  "unsupported-binary-disguised.txt": {
+    "result": "binary_content"
+  },
+  "not-utf8-windows-1252.txt": {
+    "result": "not_utf8"
+  },
+  "not-utf8-utf16.txt": {
+    "result": "not_utf8"
+  },
+  "too-long-text.docx": {
+    "result": "text_too_long"
+  },
+  "too-long-text.pdf": {
+    "result": "text_too_long"
+  },
+  "blank-pages-at-limit.pdf": {
+    "result": "accepted",
+    "contains": "Back cover - end of the archive.",
+    "chars": 60000
+  },
+  "blank-pages-over-limit.pdf": {
+    "result": "text_too_long"
+  },
+  "password-protected.pdf": {
+    "result": "password_protected"
+  }
+}

@@ -1,7 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import FileDropZone from "./FileDropZone";
+import { MAX_LESSON_TEXT_CHARS, checkSubmission, normalizeLessonText } from "@/lib/uploadRules";
+import { postLessonMaterial } from "@/lib/uploadClient";
 
 const STEPS = [
   "Parsing your document…",
@@ -13,7 +16,6 @@ const STEPS = [
 
 export default function UploadForm() {
   const router = useRouter();
-  const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
   const [gradeLevel, setGradeLevel] = useState("Middle school");
@@ -23,13 +25,16 @@ export default function UploadForm() {
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(0);
   const [error, setError] = useState("");
-  const [dragOver, setDragOver] = useState(false);
+
+  const textChars = normalizeLessonText(text).length;
+  const both = file !== null && textChars > 0;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (!file && text.trim().length < 50) {
-      setError("Add a file or paste at least a paragraph of text.");
+    const problem = checkSubmission(file !== null, text);
+    if (problem) {
+      setError(problem.message);
       return;
     }
     setLoading(true);
@@ -39,19 +44,19 @@ export default function UploadForm() {
     try {
       const form = new FormData();
       if (file) form.append("file", file);
-      form.append("text", text);
+      else form.append("text", text);
       form.append("grade_level", gradeLevel);
       form.append("goal", goal || "Understand the material deeply");
       form.append("preferred_style", style);
       form.append("study_time", studyTime);
 
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Upload failed");
-      router.push(`/dashboard/${json.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-      setLoading(false);
+      const result = await postLessonMaterial<{ id: string }>("/api/upload", form);
+      if (!result.ok) {
+        setError(result.message);
+        setLoading(false);
+        return;
+      }
+      router.push(`/dashboard/${result.data.id}`);
     } finally {
       clearInterval(ticker);
     }
@@ -69,52 +74,32 @@ export default function UploadForm() {
 
   return (
     <form onSubmit={submit} className="space-y-5">
-      {/* File drop zone */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
-        }}
-        onClick={() => fileInput.current?.click()}
-        className={`cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition ${
-          dragOver ? "border-violet-400 bg-violet-50" : "border-slate-300 bg-white hover:border-violet-300"
-        }`}
-      >
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".pdf,.docx,.doc,.txt,.md"
-          className="hidden"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
-        />
-        {file ? (
-          <div>
-            <p className="font-medium text-violet-700">📄 {file.name}</p>
-            <p className="mt-1 text-xs text-slate-400">{(file.size / 1024).toFixed(0)} KB — click to change</p>
-          </div>
-        ) : (
-          <div>
-            <p className="font-medium">Drop your PDF, DOCX or TXT here</p>
-            <p className="mt-1 text-sm text-slate-400">or click to browse</p>
-          </div>
-        )}
-      </div>
+      <FileDropZone file={file} onFileChange={setFile} onError={setError} />
 
       <div className="relative text-center text-xs font-medium uppercase tracking-wide text-slate-400">
         <span className="relative z-10 bg-slate-50 px-3">or paste text</span>
         <div className="absolute left-0 right-0 top-1/2 -z-0 h-px bg-slate-200" />
       </div>
 
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={5}
-        placeholder="Paste chapter text, lecture notes, an article…"
-        className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-      />
+      <div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={5}
+          aria-label="Paste lesson text"
+          aria-describedby="upload-text-count"
+          placeholder="Paste chapter text, lecture notes, an article…"
+          className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+        />
+        <p id="upload-text-count" className={`mt-1 text-right text-xs ${textChars > MAX_LESSON_TEXT_CHARS ? "font-semibold text-red-600" : "text-slate-400"}`}>
+          {textChars.toLocaleString("en-US")} / {MAX_LESSON_TEXT_CHARS.toLocaleString("en-US")} characters
+        </p>
+        {both && (
+          <p className="mt-1 rounded-xl bg-amber-50 p-2 text-xs text-amber-700" data-testid="both-inputs-note">
+            You've added a file and pasted text — only one can be used. Remove the file or clear the text.
+          </p>
+        )}
+      </div>
 
       {/* Student profile */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -168,7 +153,11 @@ export default function UploadForm() {
         </div>
       </div>
 
-      {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-600">{error}</p>}
+      {error && (
+        <p role="alert" data-testid="upload-error" className="rounded-xl bg-red-50 p-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
 
       <button
         type="submit"

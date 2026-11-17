@@ -6,6 +6,7 @@ import { ravenRun } from "./raven";
 import { hasEverMind } from "./evermind";
 import { uniqueCompletions } from "./progressShared";
 import { LessonProgressSummary, summarizeStudentProgress } from "./progress";
+import { classroomLessons } from "./lessons";
 
 const MODALITY_LABELS: Record<OutputType, string> = {
   mindmap: "Mind Map",
@@ -117,7 +118,7 @@ export interface ClassroomAnalytics {
   questions: { text: string; student_name: string; lesson_title: string; at: string }[];
   question_count: number;
   per_student: { student_id: string; name: string; interests: string[]; opens: number; completions: number; questions: number; favorite: string }[];
-  lesson_activity: { lesson_id: string; title: string; opens: number }[];
+  lesson_activity: { lesson_id: string; title: string; opens: number; archived: boolean }[];
 }
 
 export function buildClassroomAnalytics(classroomId: string): ClassroomAnalytics {
@@ -184,7 +185,10 @@ export function buildClassroomAnalytics(classroomId: string): ClassroomAnalytics
     lessonMap[e.lesson_id!] = (lessonMap[e.lesson_id!] || 0) + 1;
   });
   const lesson_activity = Object.entries(lessonMap)
-    .map(([lesson_id, o]) => ({ lesson_id, title: getProject(lesson_id)?.blueprint.title || "Lesson", opens: o }))
+    .map(([lesson_id, o]) => {
+      const p = getProject(lesson_id);
+      return { lesson_id, title: p?.blueprint.title || "Lesson", opens: o, archived: Boolean(p?.archived_at) };
+    })
     .sort((a, b) => b.opens - a.opens);
 
   return {
@@ -213,7 +217,7 @@ export interface StudentDetail {
   actual_favorite: { modality: OutputType; label: string } | null;
   modality_breakdown: { modality: OutputType; label: string; opens: number; completions: number }[];
   questions: { text: string; lesson_title: string; at: string }[];
-  lessons: { lesson_id: string; title: string; opens: number; completions: number }[];
+  lessons: { lesson_id: string; title: string; opens: number; completions: number; archived: boolean }[];
   // Saved progress per lesson of the classroom (same data the student sees).
   progress: LessonProgressSummary[];
   matches_guess: boolean | null;
@@ -260,7 +264,10 @@ export function buildStudentDetail(classroomId: string, studentId: string): Stud
     if (e.lesson_id) lessonMap[e.lesson_id].comps++;
   });
   const lessons = Object.entries(lessonMap)
-    .map(([lesson_id, v]) => ({ lesson_id, title: getProject(lesson_id)?.blueprint.title || "Lesson", opens: v.opens, completions: v.comps }))
+    .map(([lesson_id, v]) => {
+      const p = getProject(lesson_id);
+      return { lesson_id, title: p?.blueprint.title || "Lesson", opens: v.opens, completions: v.comps, archived: Boolean(p?.archived_at) };
+    })
     .sort((a, b) => b.opens - a.opens);
 
   return {
@@ -290,7 +297,9 @@ export async function professorChat(classroomId: string, history: ChatMessage[],
   const classroom = getClassroom(classroomId);
   if (!classroom) return "I couldn't find that classroom.";
   const analytics = buildClassroomAnalytics(classroomId);
-  const lessons = classroom.lesson_ids.map((id) => getProject(id)?.blueprint.title).filter(Boolean);
+  const { active: activeLessons, archived: archivedLessons } = classroomLessons(classroom);
+  const lessons = activeLessons.map((p) => p.blueprint.title);
+  const archivedTitles = archivedLessons.map((p) => p.blueprint.title);
 
   const system = `You are Antclass's teaching assistant for Professor ${classroom.professor_name}'s classroom "${classroom.name}" (${classroom.subject}).
 Help the professor understand and act on how their class is learning. Be concise, specific, and practical — cite the data. Suggest concrete next steps (which format to build, which student to check on).
@@ -298,7 +307,7 @@ ${hasEverMind() ? "You have long-term memory of everything that has happened in 
 
 CLASS DATA (live):
 - Students: ${analytics.student_count}
-- Lessons: ${lessons.join("; ") || "none"}
+- Lessons: ${lessons.join("; ") || "none"}${archivedTitles.length ? `\n- Archived lessons (hidden from students, history kept): ${archivedTitles.join("; ")}` : ""}
 - Headline: ${analytics.headline}
 - Modality engagement (opens/completions): ${analytics.modality_opens.map((m) => `${m.label} ${m.opens}/${m.completions}`).join(", ")}
 - Total questions asked: ${analytics.question_count}

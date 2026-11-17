@@ -1,0 +1,13 @@
+{
+  "60000": {
+    "perPage": 2942,
+    "extra": 301
+  },
+  "60001": {
+    "perPage": 2942,
+    "extra": 302
+  },
+  "_comment": "Written by npm run fixtures:documents. Layout that makes the blank-pages booklets normalize to exactly 60,000 / 60,001 characters; --check rebuilds from it without parsing.",
+  "source": "valid-lesson-pdf.md",
+  "sourceSha256": "3986a7bb678e51ea62aae10525abc786a4b571084c6619b298188feeea2da621"
+}
