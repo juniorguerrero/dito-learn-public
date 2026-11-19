@@ -221,5 +221,13 @@ export function useLessonProgress(lessonId: string, student: LocalStudent | null
     [lessonId, studentId]
   );
 
-  return { mode, completed, pending, flashcards, saveStatus, notice, saveFlashcards, complete };
+  /** Formats the server reports as completed elsewhere (e.g. a saved game victory). */
+  const mergeCompleted = useCallback((modalities: OutputType[]) => {
+    if (modeRef.current !== "synced" || modalities.length === 0) return;
+    const next = new Set(completedRef.current);
+    modalities.forEach((m) => next.add(m));
+    if (next.size !== completedRef.current.size) applyCompleted(next);
+  }, []);
+
+  return { mode, completed, pending, flashcards, saveStatus, notice, saveFlashcards, complete, mergeCompleted };
 }

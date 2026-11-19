@@ -15,7 +15,9 @@ export function describeEvent(e: LearningEvent): string {
     case "question":
       return `${e.student_name} asked${where}: "${e.text}"`;
     case "game_result":
-      return `${e.student_name} scored ${e.value ?? "?"} in the learning game${where}.`;
+      return `${e.student_name} scored ${e.value ?? "?"} in the learning game${where}${
+        e.text === "victory" ? " and completed the quest" : e.text === "game_over" ? " before running out of lives" : ""
+      }.`;
   }
 }
 

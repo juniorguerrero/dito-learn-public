@@ -62,6 +62,16 @@ POST /api/generate/{image,video,tts,music}  -> direct model wrappers
 GET  /api/lessons/[id]/progress?student_id=  -> { progress } saved progress for one student + lesson
 PUT  /api/lessons/[id]/progress              -> { student_id, rev, flashcards } saves flashcard choices + position
 POST /api/lessons/[id]/progress/complete     -> { student_id, modality } idempotent "I got this"
+
+GET  /api/lessons/[id]/game/attempts?student_id=             -> saved Concept Quest results (latest, count, best per version, history)
+POST /api/lessons/[id]/game/attempts                         -> { student_id, attempt_id, version } start an attempt (idempotent per attempt_id)
+POST /api/lessons/[id]/game/attempts/[attemptId]/finish      -> { student_id, transcript } server-scored finish (idempotent)
+GET  /api/lessons/[id]/game/attempts/[attemptId]?student_id= -> one finished attempt with its answer review
+
+GET  /api/classrooms/[id]/game-results                                          -> teacher: per lesson (incl. archived) who has finished games
+GET  /api/classrooms/[id]/lessons/[lessonId]/game-results                       -> teacher: per student latest, best per version, finished count
+GET  /api/classrooms/[id]/lessons/[lessonId]/game-results/[studentId]           -> teacher: one student's finished games
+GET  /api/classrooms/[id]/lessons/[lessonId]/game-results/[studentId]/attempts/[attemptId] -> teacher: one game's answers
 ```
 
 ## Uploading lesson material
@@ -188,6 +198,126 @@ completed learning formats. It is restored when the student comes back or refres
   If the deck is regenerated with different cards, the student starts that deck fresh.
 - **No identity / not enrolled / offline (static demo):** the lesson still works with in-memory
   state, and a small notice says progress isn't being saved.
+
+## Concept Quest results
+
+Students' games are saved per student and lesson in `data/game-attempts/<studentId>/<lessonId>.json`
+(`src/lib/gameAttempts.ts`). After a refresh the student sees their latest result, their finished
+games, their best score per game version, and can review every answer with its explanation or start
+a new attempt.
+
+- **Same rules as before.** 3 lives; per level 3 quiz gates (+10, a wrong answer costs a life), a
+  matching puzzle (`max(5, 20 − 5 × misses)`, never costs a life) and a boss (+30; a wrong answer costs a
+  life and the boss is asked again). The rules live in one place, `src/lib/gameEngine.ts`, used by both
+  the game screen and the server.
+- **The server scores the game.** The browser sends only the answers it recorded (the transcript).
+  The server replays them against the stored game version and rejects anything illegal: answers out
+  of order, repeated, out of range, after the game ended, or a game that isn't finished. A score or
+  outcome sent by the browser is ignored. `POST /api/events` no longer accepts `game_result`
+  (403); the server logs one `game_result` event per finished attempt itself.
+  **Limitation:** the answer key is in the browser (the game shows right/wrong instantly), so a
+  determined student could submit a transcript of correct answers. The server guarantees a legal,
+  correctly-scored game, not that the student didn't look up answers.
+- **Attempts.** "Start level" on level 1 starts an attempt with an id chosen by the browser.
+  Double clicks and retried requests reuse that id, so they never create or score a second attempt,
+  log a second event or count a completion twice. Starting a new attempt marks an unfinished one as
+  *interrupted*. Interrupted attempts are never shown as finished and don't count toward the finished
+  count, latest result or best score. There is no mid-game resume.
+- **Wins and losses.** Both are finished attempts. A saved **victory** marks the Game format done
+  through the same idempotent completion path as "I got this". A game over does not.
+- **Saving can fail.** The finished answers are kept in `localStorage` first and re-sent with the
+  same attempt id: automatic backoff, a *Retry now* button, when the browser comes back online, and
+  on the next visit after a refresh. The result shows as saved only after the server confirms it.
+- **Game versions.** A version is a fingerprint of the game's questions, answers, explanations and
+  pairs (not background images). When an attempt starts, that version is stored once in
+  `data/game-versions/<lessonId>/<version>.json` and never changed. An attempt stays tied to it: if
+  the teacher regenerates the game mid-attempt, the attempt is still scored on the version it was
+  played on. Starting a new attempt on an outdated page is refused (409 `game_changed`), and the
+  student is moved to the new version. Finished attempts keep their own question/answer review, so
+  history is unaffected by regeneration. Best scores are shown per version, with the current version
+  highlighted.
+- **Regenerating** the game is a teacher action: the student Game tab no longer shows "↻ Regenerate".
+  This is only a UI change, not access control. The generate endpoint is open like every other
+  route in this app, which has no login.
+- **Malformed games** (e.g. a level with fewer than 3 quiz questions, which used to crash the game
+  screen) show why they can't be played and can't be started (422 `game_unplayable`). Levels with
+  more than 3 quiz questions play their first 3, as before.
+- **Interrupted attempts are never deleted.** A browser may still hold a finished-but-unsaved
+  result for any of them, and finishing an interrupted attempt is allowed. Each one is a ~150-byte
+  record in the student's attempt file.
+- **Saving is safe to repeat after a partial failure.** The `game_result` event's id is chosen and
+  stored together with the finished result, before the event is appended. After appending, the attempt is marked
+  logged. If that mark fails to save, the retry finds the event by its id instead of logging it
+  again (`tests/gameAttempts.failures.test.ts`).
+- **Storage problems never erase a waiting result.** If a student's attempt file exists but can't be
+  read (damaged, truncated, permission or disk error), or an attempt's game-version copy is missing or
+  damaged, the server answers 503 and changes nothing: the file is never moved aside, replaced or
+  rewritten, and no score is accepted without replaying the answers against the stored version. The
+  browser keeps the finished result and shows *Not saved yet — … can't be read right now (a storage
+  problem on the server)…*. After a refresh it shows *Your saved game results can't be loaded right
+  now* with the number of games kept on the device and **Try again**. Once the file is readable again
+  (restored or repaired by whoever runs the server), the kept result is saved with its original attempt
+  id. Meanwhile the teacher sees the student as *saved results can't be read right now*, not as "not
+  played", and left out of the totals. A result the server can't match to a started attempt (404/403)
+  is also kept on the device (not retried automatically; **Try again** and the next visit retry it).
+  Only answers the server can never score (400/409/422) are dropped, and the student is told.
+- **Valid JSON is not enough.** An attempt file is only used if it is *this* student's record for
+  *this* lesson and classroom and every attempt in it is well-formed (ids, version, status, a finished
+  attempt's score, outcome, answers). A version snapshot is only used if it belongs to the lesson, is
+  playable and its content still hashes to its version fingerprint — an edited game that keeps its
+  file name and version field is refused. Anything else is the same recoverable 503 as above:
+  the file is left exactly as it is, and writes always go to the requesting student's own record
+  (never to a path taken from the file's contents), so a misplaced copy of another student's file
+  can't be finished, scored or written through.
+- **Lesson edits, archiving, restoring** never touch results. A student who already has an
+  archived lesson open can still finish and save, like flashcard progress.
+- The teacher's lesson dashboard (`/dashboard/[id]`) plays the game as a preview and records nothing.
+
+### Teacher view
+
+On a classroom page (`/teacher/[id]`) the **🎮 Game results** tab shows, for a chosen lesson (active or
+archived), every enrolled student's latest result, best score per game version and number of
+finished games, with drill-down into each finished game: every question with the chosen answer, the
+correct answer and the explanation, as asked in that game's version.
+
+- Only finished games (wins and games that ran out of lives) are counted. In-progress and
+  interrupted attempts never appear in counts, latest results or best scores.
+- Versions are numbered in the order they were first played ("Version 1", "Version 2"). The current
+  version is highlighted, and best scores are never mixed across versions.
+- A lesson's results are only reachable through its own classroom, and a student's only if they are
+  enrolled there; anything else is a 404. Teacher views only read: they never write or move files.
+- Like the other teacher routes (no teacher login in this app), these endpoints are open to anyone
+  who can reach the server.
+- Phones get one card per student instead of the table, and the classroom tab bar scrolls sideways
+  instead of widening the page.
+
+```bash
+npm test                          # incl. gameEngine, gameAttempts(.failures/.storage/.records), gameTeacher tests
+scripts/verify-game-results.sh    # build, start (mock mode, new temp data dir), run the 3 browser scripts, stop
+```
+
+Running the browser scripts by hand: the server and the scripts must use the **same** data directory,
+and it has to be set for `npm start` itself (not only for `npm run build`). Export it once:
+
+```bash
+# Terminal 1: mock mode on a throwaway data directory
+export DITO_DATA_DIR=$(mktemp -d /tmp/dito-demo-XXXXXX)
+echo "$DITO_DATA_DIR" > /tmp/dito-demo-dir        # remember it for the other terminal
+export ANTHROPIC_API_KEY= EVERMIND_API_KEY=       # empty values win over keys in .env.local
+npm run build && npm start                        # http://localhost:3000
+
+# Terminal 2: the same directory
+export DITO_DATA_DIR=$(cat /tmp/dito-demo-dir)
+BASE=http://localhost:3000 python3 tests/browser/game_results.py          # student workflow
+BASE=http://localhost:3000 python3 tests/browser/teacher_game_results.py  # teacher dashboard
+BASE=http://localhost:3000 python3 tests/browser/game_recovery.py         # damaged-record recovery
+```
+
+The scripts leave their synthetic classes in that directory; open `/teacher` to look at them.
+
+The browser script needs the server's `DITO_DATA_DIR`. Mock generation is deterministic, so to get a
+second game version (and a malformed game) without API keys, the script rewrites its own synthetic
+lessons' games there.
 
 ## Joining a class and where data is kept
 

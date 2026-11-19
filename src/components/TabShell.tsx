@@ -11,6 +11,10 @@ interface Props {
   onGenerate: (force?: boolean) => void;
   generateLabel?: string;
   loadingLabel?: string;
+  // false hides "↻ Regenerate" (e.g. the Game tab for students: regenerating
+  // replaces the class's shared game, so that control stays with the teacher).
+  // This is a UI choice, not access control: the generate API itself is open.
+  allowRegenerate?: boolean;
   children?: React.ReactNode;
 }
 
@@ -27,6 +31,7 @@ export default function TabShell({
   onGenerate,
   generateLabel = "Generate",
   loadingLabel = "Generating…",
+  allowRegenerate = true,
   children,
 }: Props) {
   if (state?.loading) {
@@ -60,11 +65,13 @@ export default function TabShell({
     <div>
       {state?.error && <p className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-600">{state.error}</p>}
       {children}
-      <div className="mt-4 text-right">
-        <button onClick={() => onGenerate(true)} className="text-xs font-medium text-slate-400 hover:text-violet-600">
-          ↻ Regenerate
-        </button>
-      </div>
+      {allowRegenerate && (
+        <div className="mt-4 text-right">
+          <button onClick={() => onGenerate(true)} className="text-xs font-medium text-slate-400 hover:text-violet-600">
+            ↻ Regenerate
+          </button>
+        </div>
+      )}
     </div>
   );
 }

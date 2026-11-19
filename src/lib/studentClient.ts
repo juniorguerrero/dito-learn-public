@@ -33,7 +33,9 @@ export function track(params: {
   classroom_id: string;
   student_id: string;
   student_name: string;
-  type: "lesson_open" | "modality_open" | "modality_complete" | "question" | "game_result";
+  // Game results are not sent from here: they are recorded server-side when a
+  // game attempt is finished (see useGameResults).
+  type: "lesson_open" | "modality_open" | "modality_complete" | "question";
   lesson_id?: string;
   modality?: OutputType;
   value?: number;

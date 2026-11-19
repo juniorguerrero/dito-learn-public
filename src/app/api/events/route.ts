@@ -13,6 +13,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "classroom_id, student_id and type are required" }, { status: 400 });
     }
 
+    // Game results are only recorded by finishing a game attempt, where the
+    // server derives the score from the validated answers
+    // (POST /api/lessons/[id]/game/attempts/[attemptId]/finish). A score sent
+    // here directly is refused and nothing is logged.
+    if (b.type === "game_result") {
+      return NextResponse.json(
+        { error: "Game results can't be logged directly; they are recorded when a game attempt is finished.", code: "game_result_not_accepted" },
+        { status: 403 }
+      );
+    }
+
     // Completions are idempotent per (student, lesson, format): route them through
     // the progress store so repeated/legacy requests can't inflate teacher totals.
     if (b.type === "modality_complete") {

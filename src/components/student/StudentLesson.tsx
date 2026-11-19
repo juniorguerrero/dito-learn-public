@@ -15,6 +15,7 @@ import VideoTab from "../tabs/VideoTab";
 import SongTab from "../tabs/SongTab";
 import LessonChat from "./LessonChat";
 import { useLessonProgress } from "./useLessonProgress";
+import { useGameResults } from "./useGameResults";
 
 const MODALITIES: { key: OutputType; label: string; icon: string; blurb: string }[] = [
   { key: "mindmap", label: "Mind Map", icon: "🧠", blurb: "See how it all connects" },
@@ -42,6 +43,9 @@ export default function StudentLesson({
   // Flashcard choices/position + completed formats, persisted per student + lesson.
   const progress = useLessonProgress(project.id, student);
   const completed = progress.completed;
+  // Concept Quest attempts + results. A saved victory completes the game format
+  // on the server (idempotent); mirror it here without another request.
+  const gameResults = useGameResults(project.id, student, { onCompleted: progress.mergeCompleted });
   const openedRef = useRef(false);
 
   useEffect(() => {
@@ -139,7 +143,7 @@ export default function StudentLesson({
       case "story_slides": return <StorySlidesTab data={project.outputs.story_slides} {...shared} />;
       case "podcast": return <PodcastTab data={project.outputs.podcast} {...shared} onSynthesize={() => synthesizeAudio("podcast")} />;
       case "story_audio": return <StoryAudioTab data={project.outputs.story_audio} {...shared} onSynthesize={() => synthesizeAudio("story_audio")} />;
-      case "game": return <GameTab data={project.outputs.game} {...shared} />;
+      case "game": return <GameTab data={project.outputs.game} {...shared} results={gameResults} allowRegenerate={false} />;
       case "video": return <VideoTab data={project.outputs.video} {...shared} />;
       case "song": return <SongTab data={project.outputs.song} {...shared} />;
     }

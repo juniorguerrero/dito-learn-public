@@ -22,7 +22,7 @@ export class ProgressError extends Error {
   }
 }
 
-interface Ctx {
+export interface Ctx {
   student: Student;
   project: Project;
   classroomId: string;
@@ -31,7 +31,8 @@ interface Ctx {
 const progressFile = (studentId: string, lessonId: string) =>
   path.join(dataRoot(), "progress", studentId, `${lessonId}.json`);
 
-function resolveContext(studentId: unknown, lessonId: unknown): Ctx {
+/** Student exists, lesson exists in a classroom, and the student is enrolled there (shared with game attempts). */
+export function resolveContext(studentId: unknown, lessonId: unknown): Ctx {
   if (typeof studentId !== "string" || !safeId(studentId)) throw new ProgressError(400, "A valid student_id is required");
   if (typeof lessonId !== "string" || !safeId(lessonId)) throw new ProgressError(400, "A valid lesson id is required");
   const student = getStudent(studentId);

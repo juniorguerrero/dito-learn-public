@@ -11,6 +11,7 @@ import InsightsPanel from "./InsightsPanel";
 import StudentDetailModal from "./StudentDetailModal";
 import ProfessorChat from "./ProfessorChat";
 import MessagesPanel from "./MessagesPanel";
+import GameResultsPanel from "./GameResultsPanel";
 
 interface StudentLite {
   id: string;
@@ -69,7 +70,7 @@ export default function ClassroomWorkspace({
       setRefreshing(false);
     }
   }, [classroom.id]);
-  const [tab, setTab] = useState<"lessons" | "students" | "messages" | "insights" | "assistant">("lessons");
+  const [tab, setTab] = useState<"lessons" | "students" | "games" | "messages" | "insights" | "assistant">("lessons");
   const [copied, setCopied] = useState(false);
   const [openStudent, setOpenStudent] = useState<string | null>(null);
   useEffect(() => {
@@ -105,10 +106,12 @@ export default function ClassroomWorkspace({
         </button>
       </div>
 
-      <div className="mt-5 flex gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+      {/* Scrolls sideways on narrow screens instead of widening the page. */}
+      <div className="mt-5 flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
         {[
           ["lessons", "📚 Lessons"],
           ["students", "🧑‍🎓 Students"],
+          ["games", "🎮 Game results"],
           ["messages", "💬 Messages"],
           ["insights", "📊 Insights"],
           ["assistant", "🤖 Ask AI"],
@@ -116,7 +119,7 @@ export default function ClassroomWorkspace({
           <button
             key={k}
             onClick={() => setTab(k as typeof tab)}
-            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+            className={`shrink-0 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-medium transition ${
               tab === k ? "bg-violet-600 text-white shadow" : "text-slate-500 hover:bg-slate-100"
             }`}
           >
@@ -173,6 +176,7 @@ export default function ClassroomWorkspace({
           </div>
         )}
 
+        {tab === "games" && <GameResultsPanel classroomId={classroom.id} />}
         {tab === "messages" && <MessagesPanel classroomId={classroom.id} students={students} />}
         {tab === "insights" && <InsightsPanel classroomId={classroom.id} />}
         {tab === "assistant" && <ProfessorChat classroomId={classroom.id} />}

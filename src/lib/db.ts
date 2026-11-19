@@ -100,9 +100,14 @@ export function listStudentsInClassroom(classroomId: string): Student[] {
 
 // ---------- Events (append-only log powering observability) ----------
 
-export function logEvent(e: Omit<LearningEvent, "id" | "created_at">): LearningEvent {
+/**
+ * Append one event. `opts.id` lets a caller that must log an event at most once
+ * (e.g. a game result) choose the id in advance, so a retry can check whether
+ * the event was already written.
+ */
+export function logEvent(e: Omit<LearningEvent, "id" | "created_at">, opts: { id?: string } = {}): LearningEvent {
   ensure();
-  const full: LearningEvent = { ...e, id: randomUUID(), created_at: new Date().toISOString() };
+  const full: LearningEvent = { ...e, id: opts.id ?? randomUUID(), created_at: new Date().toISOString() };
   fs.appendFileSync(eventsFile(), JSON.stringify(full) + "\n");
   return full;
 }
